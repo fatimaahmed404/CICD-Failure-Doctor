@@ -1,0 +1,1 @@
+{"version":3,"file":"validateWebhook.d.ts","sourceRoot":"","sources":["../../src/auth/validateWebhook.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;;;GAaG;AAGH,OAAO,KAAK,EAAE,OAAO,EAAE,MAAM,SAAS,CAAC;AAEvC,MAAM,WAAW,uBAAuB;IACtC,KAAK,EAAE,OAAO,CAAC;IACf,UAAU,EAAE,GAAG,GAAG,GAAG,GAAG,IAAI,CAAC;CAC9B;AAED;;;;;;;;GAQG;AACH,wBAAgB,sBAAsB,CAAC,GAAG,EAAE,OAAO,GAAG,uBAAuB,CAiC5E"}
