@@ -1,0 +1,62 @@
+> analytics-platform@4.2.0 test
+> jest --testTimeout=30000 --forceExit
+
+Determining test suites to run...
+
+ PASS  src/utils/formatter.test.ts (2.1s)
+ PASS  src/api/health.test.ts (1.3s)
+ PASS  src/models/event.test.ts (4.2s)
+ PASS  src/services/cache.test.ts (3.7s)
+
+[36m[jest][0m Running integration tests...
+[36m[jest][0m Connecting to test database at localhost:5432...
+[32m[jest][0m Database connection established
+[36m[jest][0m Seeding test data (25,000 records)...
+[32m[jest][0m Test data seeded successfully
+
+ PASS  src/services/user.integration.test.ts (18.4s)
+
+[36m[jest][0m Starting analytics aggregation tests...
+
+ RUNS  src/services/analytics.integration.test.ts
+
+[33m[WARN][0m Test "should aggregate 90-day retention metrics" is taking longer than expected...
+[33m[WARN][0m Test "should aggregate 90-day retention metrics" running for 30s, threshold: 30s
+[33m[WARN][0m Test "should compute cohort analysis for Q3" is taking longer than expected...
+
+[31m● Timeout - Async callback was not invoked within the 30000ms timeout specified by jest.setTimeout.[0m
+[31m● Exceeded timeout waiting for analytics.integration.test.ts[0m
+
+  [31m✕ should aggregate 90-day retention metrics (30001ms)[0m
+  [31m✕ should compute cohort analysis for Q3 (30002ms)[0m
+  [31m✕ should generate monthly active user report (30000ms)[0m
+
+[31mFAIL  src/services/analytics.integration.test.ts[0m
+  [31m● Test suite failed to run[0m
+
+    [31mJest: "globalSetup" file teardown exceeded 10000ms limit.[0m
+    [31mForce exiting Jest: Have you considered using `--forceExit`?[0m
+
+[36m[CI][0m Job timeout detected after 360 seconds
+[36m[CI][0m Sending SIGTERM to process group...
+[36m[CI][0m Process did not stop within 5 seconds, sending SIGKILL...
+
+[33mwarning[0m Detected 3 open handles potentially keeping Jest from exiting:
+[33m  ●[0m TCPSERVERWRAP
+
+        at Object.<anonymous> (src/services/analytics.integration.test.ts:12:25)
+
+[31mError: Job exceeded maximum execution time of 360 seconds[0m
+[31mTimeout: The runner has received a shutdown signal[0m
+[31mThis can happen when:[0m
+[31m  - A test suite is running queries that exceed the timeout threshold[0m
+[31m  - Database migrations did not complete before tests ran[0m
+[31m  - An integration test is waiting on an external service that is unavailable[0m
+
+[1mTest Suites[0m: [31m1 failed[0m, 4 passed, 5 total
+[1mTests[0m:       [31m3 failed[0m (timeout), 38 passed, 41 total
+[1mSnapshots[0m:   0 total
+[1mTime[0m:        [31m360.24s[0m
+
+[31m##[error][0mThe operation was canceled.
+[31m##[error][0mProcess completed with exit code 124.

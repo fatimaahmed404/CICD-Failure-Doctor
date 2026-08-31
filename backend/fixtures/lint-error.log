@@ -1,0 +1,51 @@
+> frontend-app@2.0.0 lint
+> eslint src --ext .ts,.tsx --max-warnings 0 && prettier --check "src/**/*.{ts,tsx,css}"
+
+[36m[eslint][0m Running ESLint v8.57.0...
+[36m[eslint][0m Checking 84 files...
+
+[1msrc/components/UserProfile.tsx[0m
+  [31m14:3[0m  [31merror[0m  'useState' is defined but never used                        [33mno-unused-vars[0m
+  [31m27:5[0m  [31merror[0m  React Hook "useEffect" has a missing dependency: 'fetchUser'  [33mreact-hooks/exhaustive-deps[0m
+  [31m52:1[0m  [31merror[0m  Line 52 exceeds the maximum line length of 120                [33mmax-len[0m
+  [33m89:10[0m [33mwarning[0m  Unexpected console statement                                [33mno-console[0m
+
+[1msrc/services/api.ts[0m
+  [31m8:1[0m   [31merror[0m  'axios' is defined but never used                             [33mno-unused-vars[0m
+  [31m33:24[0m [31merror[0m  Unexpected any. Specify a different type                       [33m@typescript-eslint/no-explicit-any[0m
+  [31m67:12[0m [31merror[0m  Promises must be awaited, end with a call to .catch, or end    [33m@typescript-eslint/no-floating-promises[0m
+            with a call to .then with a rejection handler.
+  [31m101:5[0m  [31merror[0m  'async' keyword is unnecessary for functions that always       [33m@typescript-eslint/require-await[0m
+            resolve synchronously
+
+[1msrc/hooks/useAuth.ts[0m
+  [31m22:9[0m  [31merror[0m   'token' is assigned a value but never used                   [33mno-unused-vars[0m
+  [31m44:3[0m  [31merror[0m   Do not use 'any' type assertion                              [33m@typescript-eslint/no-explicit-any[0m
+
+[1msrc/pages/Dashboard.tsx[0m
+  [31m5:1[0m   [31merror[0m  'Link' imported from 'react-router-dom' but never used        [33mno-unused-vars[0m
+  [31m78:1[0m  [31merror[0m  Expected blank line before return statement                    [33mpadded-blocks[0m
+  [31m119:7[0m [31merror[0m  void type not allowed as template literal value               [33m@typescript-eslint/restrict-template-expressions[0m
+
+[1msrc/utils/format.ts[0m
+  [31m3:7[0m  [31merror[0m  Parsing error: Unexpected token '?'                            [31m(parser)[0m
+  [31m18:1[0m [31merror[0m  Unexpected use of comma operator                               [33mno-sequences[0m
+
+[36m[prettier][0m Checking formatting...
+
+[31mChecking formatting of src/components/Modal.tsx[0m
+[31m[warn] src/components/Modal.tsx[0m
+[31m[warn][0m src/components/Button.tsx
+[31m[warn][0m src/styles/global.css
+[31m[warn] Code style issues found in 3 files. Forgot to run Prettier?[0m
+
+[36m[eslint][0m Summary:
+[31m✖ 13 errors[0m, [33m1 warning[0m found.
+
+[31mESLint found errors.[0m Run [36mnpm run lint:fix[0m to auto-fix some issues.
+[33mNote:[0m Some errors (like [31mno-explicit-any[0m) require manual review.
+
+[31mError: ESLint exited with code 1 (13 errors found, max-warnings flag set to 0)[0m
+
+[31m##[error][0mProcess completed with exit code 1.
+[31m##[error][0mLint check failed. Please fix all lint errors before merging.

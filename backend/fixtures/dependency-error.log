@@ -1,0 +1,66 @@
+> data-pipeline@1.0.0 install
+> npm ci
+
+npm warn config production Use `--omit=dev` instead.
+
+added 1 package, and audited 2 packages in 312ms
+
+found 0 vulnerabilities
+
+> data-pipeline@1.0.0 build
+> tsc && webpack --config webpack.prod.js
+
+[1/4] Resolving packages...
+[2/4] Fetching packages...
+[34minfo[0m There appears to be trouble with your network connection. Retrying...
+[34minfo[0m There appears to be trouble with your network connection. Retrying...
+[4/4] Linking dependencies...
+
+[31merror[0m [31mCommand failed.[0m
+Exit code: 1
+Command: node /home/runner/work/data-pipeline/node_modules/.bin/webpack
+Arguments: --config webpack.prod.js
+Directory: /home/runner/work/data-pipeline
+Output:
+[36mwebpack[0m 5.88.2 compiled with [31m3 errors[0m in 4721ms
+
+[31mERROR in ./src/transforms/normalize.ts[0m
+Module not found: [31mError: Can't resolve '@company/shared-utils'[0m in '/home/runner/work/data-pipeline/src/transforms'
+
+[31mERROR in ./src/loaders/s3-loader.ts[0m
+Module not found: [31mError: Can't resolve '@company/aws-helpers'[0m in '/home/runner/work/data-pipeline/src/loaders'
+
+[31mERROR in ./src/index.ts[0m
+[31mERROR[0m [31min ./node_modules/csv-parser/index.js[0m
+Module build failed (from ./node_modules/babel-loader/lib/index.js):
+[31mError: Cannot find module 'babel-plugin-transform-class-properties'[0m
+Require stack:
+- /home/runner/work/data-pipeline/node_modules/@babel/core/lib/config/files/module-types.js
+- /home/runner/work/data-pipeline/node_modules/@babel/core/lib/config/files/index.js
+    at Function.Module._resolveFilename (node:internal/modules/cjs/loader:1048:15)
+    at Function.Module._load (node:internal/modules/cjs/loader:901:27)
+    at Module.require (node:internal/modules/cjs/loader:1113:19)
+
+[31mnpm error[0m code ERESOLVE
+[31mnpm error[0m ERESOLVE could not resolve
+[31mnpm error[0m
+[31mnpm error[0m While resolving: [33mdata-pipeline@1.0.0[0m
+[31mnpm error[0m Found: [33mreact@18.2.0[0m
+[31mnpm error[0m node_modules/react
+[31mnpm error[0m   react@"^18.0.0" from the root project
+[31mnpm error[0m
+[31mnpm error[0m Could not resolve dependency:
+[31mnpm error[0m peer [33mreact@"^17.0.0"[0m from [33mreact-dnd@14.0.5[0m
+[31mnpm error[0m node_modules/react-dnd
+[31mnpm error[0m   [33mreact-dnd@"^14.0.5"[0m from the root project
+[31mnpm error[0m
+[31mnpm error[0m Fix the upstream dependency conflict, or retry
+[31mnpm error[0m this command with --force or --legacy-peer-deps
+[31mnpm error[0m
+[31mnpm error[0m [31mA complete log of this run can be found in:[0m
+[31mnpm error[0m [31m/home/runner/.npm/_logs/2024-07-18T09_31_22_045Z-debug-0.log[0m
+
+[31m×[0m [31mfailed[0m | [33mwarning[0m Lockfile is not up-to-date. Packages may have been added/removed.
+
+[31mERROR[0m: [31mJob failed:[0m exit code 1
+[31m##[error][0mProcess completed with exit code 1.
