@@ -32,11 +32,15 @@ graph TD
         NOTIF[Notification Service - stretch]
         FB[POST /diagnoses/:id/feedback - stretch]
         FBSTATS[GET /feedback/stats - stretch]
+        AUTOFIX[AutoFixService - stretch]
+        SIMSERV[SimilarityService - stretch]
+        FLAKY[FlakinessTracker - stretch]
     end
 
     subgraph External["External - stretch"]
         SLK[Slack Webhook URL]
         EMAIL[Email - SMTP]
+        GHAPI[GitHub API]
     end
 
     GH -->|POST + X-Secret header| WH
@@ -55,14 +59,31 @@ graph TD
     DIAG -->|Query| DB
     DETAIL -->|Query| DB
 
-    %% stretch edges
+    %% stretch edges - notifications
     QUEUE -->|on complete, fire-and-forget - stretch| NOTIF
     NOTIF -->|HTTP POST - stretch| SLK
     NOTIF -->|SMTP - stretch| EMAIL
+    
+    %% stretch edges - feedback
     UI -->|Submit rating - stretch| FB
     UI -->|Load stats - stretch| FBSTATS
     FB -->|Upsert - stretch| DB
     FBSTATS -->|Query feedback table - stretch| DB
+    
+    %% stretch edges - auto-fix
+    QUEUE -->|on complete, parallel - stretch| AUTOFIX
+    AUTOFIX -->|Create branch + PR - stretch| GHAPI
+    AUTOFIX -->|Update auto_fix_pr_url - stretch| DB
+    
+    %% stretch edges - similarity
+    QUEUE -->|on complete, parallel - stretch| SIMSERV
+    SIMSERV -->|Generate embedding - stretch| LLM
+    SIMSERV -->|Find similar + update - stretch| DB
+    
+    %% stretch edges - flakiness
+    QUEUE -->|on complete, parallel - stretch| FLAKY
+    FLAKY -->|Query recent builds - stretch| DB
+    FLAKY -->|Update flaky_tests - stretch| DB
 ```
 
 ---
@@ -460,6 +481,106 @@ interface FailureCategoryStats {
 
 ---
 
+### Component 10: AutoFixService (stretch)
+
+> **Stretch Feature**: Automatically creates GitHub pull requests with suggested fixes for mechanically fixable failures. Only active when `GITHUB_TOKEN` and `GITHUB_REPO` environment variables are set.
+
+**Purpose**: Opens a GitHub PR with the LLM-generated fix when the diagnosis is high-confidence and mechanically applicable, allowing developers to apply fixes with one click rather than manual file editing.
+
+**Interface**:
+```typescript
+interface AutoFixService {
+  createFix(record: BuildRecord, result: ExtendedDiagnosisResult): Promise<string | null>;
+}
+
+interface ExtendedDiagnosisResult extends DiagnosisResult {
+  autoFixable: boolean;
+  autoFixFile?: {
+    path: string;      // relative file path in repo, e.g., "package.json"
+    content: string;   // complete file content after fix
+  };
+}
+
+interface AutoFixResult {
+  prUrl: string;       // GitHub PR URL
+  branch: string;      // created branch name
+}
+```
+
+**Responsibilities**:
+- Check that `GITHUB_TOKEN` and `GITHUB_REPO` are both set and non-empty; if either is missing, return `null` immediately without error (Req 14.5)
+- Only proceed when `result.category ∈ {"dependency-build-error", "docker-build-failure"}` AND `result.confidence = "high"` AND `result.autoFixable = true` AND `result.autoFixFile` is populated with non-empty `path` and `content` (Req 14.1)
+- Create a new branch named `cicd-doctor-fix/{record.id}` from the repository's default branch via GitHub API (Req 14.1)
+- Commit the file at `autoFixFile.path` with content `autoFixFile.content` to the new branch with commit message `"Auto-fix: {category} diagnosed in {jobName}"` (Req 14.1)
+- Open a pull request targeting the default branch with title `"Auto-fix: {category} in {jobName}"` and body containing the diagnosis `explanation` and a link to the diagnosis detail page constructed from `APP_BASE_URL` and `record.id` (Req 14.2)
+- Return the PR URL from the GitHub API response (Req 14.3)
+- On any error (network, GitHub API 4xx/5xx, insufficient permissions, branch already exists): catch, log error with full context, return `null` (Req 14.6)
+- Never throw exceptions — all errors are caught internally and result in `null` return
+
+---
+
+### Component 11: SimilarityService (stretch)
+
+> **Stretch Feature**: Generates embedding vectors for build logs and identifies similar past failures using cosine similarity. Uses the existing LLM provider's embeddings endpoint with no external vector database.
+
+**Purpose**: Helps developers learn from past solutions by surfacing previously diagnosed similar failures, reducing redundant investigation time for recurring issues.
+
+**Interface**:
+```typescript
+interface SimilarityService {
+  generateEmbedding(cleanedLog: string): Promise<number[] | null>;
+  findSimilar(embedding: number[], currentRecordId: string): Promise<SimilarMatch | null>;
+}
+
+interface SimilarMatch {
+  buildRecordId: string;
+  similarityScore: number;  // 0.0 to 1.0
+}
+```
+
+**Responsibilities**:
+- Call the LLM provider's embeddings API endpoint (e.g., OpenAI `/v1/embeddings` or compatible) using `LLM_API_KEY` with the `cleanedLog` as input (Req 15.1)
+- Parse the response and extract the embedding vector as an array of floating-point numbers (Req 15.1)
+- On success: return the embedding array; on error (network, API error, timeout, invalid response): catch, log, return `null` (Req 15.7)
+- Query the `build_records` table for all records with `status = "complete"` and non-null `embedding` column, excluding the current record (Req 15.3)
+- For each prior record, deserialize the `embedding` JSON and compute cosine similarity: `dot(a, b) / (||a|| * ||b||)` using in-process calculation (Req 15.3)
+- Identify the single most similar record with similarity > 0.85; if none exceed threshold, return `null` (Req 15.4)
+- Return `{ buildRecordId, similarityScore }` for the most similar match (Req 15.4)
+- Complete all operations (embedding + similarity search) within the existing 120-second diagnosis SLA (Req 15.6)
+- Never use external vector database services; all storage uses SQLite `build_records.embedding` TEXT column storing JSON-serialized float arrays (Req 15.8)
+
+---
+
+### Component 12: FlakinessTracker (stretch)
+
+> **Stretch Feature**: Detects intermittently failing tests by analyzing failure patterns across recent builds within the same repository.
+
+**Purpose**: Distinguishes new regressions from pre-existing flaky tests, helping developers prioritize investigation effort and avoid false alarms.
+
+**Interface**:
+```typescript
+interface FlakinessTracker {
+  checkFlaky(record: BuildRecord): Promise<FlakyTest[] | null>;
+}
+
+interface FlakyTest {
+  testName: string;
+  failureRate: string;  // e.g., "4/10"
+}
+```
+
+**Responsibilities**:
+- Only proceed when `record.category = "test-failure"` and `record.failing_tests` is a non-empty array (Req 16.1)
+- Query the `build_records` table for the 10 most recent records with `repo_name = record.repo_name` and `category = "test-failure"`, ordered by `created_at DESC`, using the index on `(repo_name, category, created_at)` (Req 16.2, 16.7)
+- Deserialize each record's `failing_tests` JSON array (Req 16.3)
+- For each test name in the current record's `failing_tests`, count how many of the 10 retrieved records (including current) contain that test name (Req 16.3)
+- If a test appears in ≥ 3 of the 10 builds, mark as flaky with `failureRate` formatted as `"{count}/10"` (Req 16.4)
+- Return array of `FlakyTest` objects for all flaky tests; return empty array if none are flaky; return `null` on error (Req 16.4)
+- On any error (database query failure, missing `failing_tests` in prior records, computation error): catch, log, return `null` (Req 16.8)
+- Never analyze across repositories — only within same `repo_name` (Req 16.6)
+
+---
+
 ## Data Models
 
 ### BuildRecord
@@ -484,6 +605,11 @@ interface BuildRecord {
   errorMessage: string | null;   // internal error if status=unavailable
   createdAt: Date;
   completedAt: Date | null;
+  autoFixPrUrl: string | null;   // GitHub PR URL if auto-fix created (stretch)
+  embedding: number[] | null;    // Embedding vector for similarity search (stretch)
+  similarTo: SimilarMatch | null; // Most similar prior failure (stretch)
+  failingTests: string[] | null; // Extracted test names for test-failure category (stretch)
+  flakyTests: FlakyTest[] | null; // Detected flaky tests (stretch)
 }
 ```
 
@@ -508,12 +634,19 @@ CREATE TABLE build_records (
   retry_count  INTEGER NOT NULL DEFAULT 0,
   error_message TEXT,
   created_at   TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  auto_fix_pr_url TEXT,           -- stretch: GitHub PR URL
+  embedding    TEXT,               -- stretch: JSON-serialized float array
+  similar_to   TEXT,               -- stretch: JSON-serialized SimilarMatch object
+  failing_tests TEXT,              -- stretch: JSON-serialized string array
+  flaky_tests  TEXT                -- stretch: JSON-serialized FlakyTest array
 );
 
 CREATE INDEX idx_build_records_status    ON build_records(status);
 CREATE INDEX idx_build_records_created   ON build_records(created_at DESC);
 CREATE INDEX idx_build_records_category  ON build_records(category);
+CREATE INDEX idx_build_records_repo_category_created 
+  ON build_records(repo_name, category, created_at DESC);  -- for flakiness queries
 ```
 
 **Validation Rules**:
@@ -522,6 +655,11 @@ CREATE INDEX idx_build_records_category  ON build_records(category);
 - `source` must be one of the three allowed values
 - `retryCount` ≤ 1 (max one retry)
 - `completedAt` is set only when `status` transitions from `pending`
+- `autoFixPrUrl` is set only when AutoFixService successfully creates a PR (stretch)
+- `embedding` stores JSON-serialized array of floats when SimilarityService succeeds (stretch)
+- `similarTo` stores JSON `{ buildRecordId: string, similarityScore: number }` when similarity > 0.85 (stretch)
+- `failingTests` stores JSON-serialized string array when `category = "test-failure"` and LLM extracts test names (stretch)
+- `flakyTests` stores JSON-serialized array of `{ testName: string, failureRate: string }` when FlakinessTracker detects flaky tests (stretch)
 
 ---
 
@@ -786,6 +924,46 @@ PROCEDURE processJob(job)
         CATCH NotificationError AS notifErr
           LOG "Notification failed: " + notifErr.message
         END TRY
+        
+        // Fire-and-forget auto-fix (stretch) — never blocks job completion
+        TRY
+          IF isAutoFixEligible(result) THEN
+            prUrl ← autoFixService.createFix(record, result)
+            IF prUrl IS NOT NULL THEN
+              db.update(record.id, { autoFixPrUrl: prUrl })
+            END IF
+          END IF
+        CATCH AutoFixError AS afErr
+          LOG "Auto-fix failed: " + afErr.message
+        END TRY
+        
+        // Fire-and-forget similarity search (stretch) — never blocks job completion
+        TRY
+          embedding ← similarityService.generateEmbedding(truncateResult.cleanedLog)
+          IF embedding IS NOT NULL THEN
+            db.update(record.id, { embedding: JSON.stringify(embedding) })
+            similarMatch ← similarityService.findSimilar(embedding, record.id)
+            IF similarMatch IS NOT NULL THEN
+              db.update(record.id, { similarTo: JSON.stringify(similarMatch) })
+            END IF
+          END IF
+        CATCH SimilarityError AS simErr
+          LOG "Similarity search failed: " + simErr.message
+        END TRY
+        
+        // Fire-and-forget flakiness detection (stretch) — never blocks job completion
+        TRY
+          IF result.category = "test-failure" AND result.failingTests IS NOT NULL THEN
+            db.update(record.id, { failingTests: JSON.stringify(result.failingTests) })
+            flakyTests ← flakinessTracker.checkFlaky(record)
+            IF flakyTests IS NOT NULL THEN
+              db.update(record.id, { flakyTests: JSON.stringify(flakyTests) })
+            END IF
+          END IF
+        CATCH FlakinessError AS flkErr
+          LOG "Flakiness detection failed: " + flkErr.message
+        END TRY
+        
         RETURN
       CATCH LLMParseError, NetworkError AS err
         attempt ← attempt + 1
@@ -804,6 +982,33 @@ PROCEDURE processJob(job)
     })
   END SEQUENCE
 END PROCEDURE
+
+FUNCTION isAutoFixEligible(result)
+  INPUT: result ExtendedDiagnosisResult
+  OUTPUT: boolean
+
+  IF NOT (env.GITHUB_TOKEN IS SET AND env.GITHUB_REPO IS SET) THEN
+    RETURN false
+  END IF
+  
+  IF result.category NOT IN ["dependency-build-error", "docker-build-failure"] THEN
+    RETURN false
+  END IF
+  
+  IF result.confidence ≠ "high" THEN
+    RETURN false
+  END IF
+  
+  IF result.autoFixable ≠ true OR result.autoFixFile IS NULL THEN
+    RETURN false
+  END IF
+  
+  IF result.autoFixFile.path = "" OR result.autoFixFile.content = "" THEN
+    RETURN false
+  END IF
+  
+  RETURN true
+END FUNCTION
 ```
 
 **Preconditions**:
@@ -815,8 +1020,305 @@ END PROCEDURE
 - If `"complete"`: all diagnosis fields are populated and non-null
 - If `"unavailable"`: `errorMessage` is set, diagnosis fields remain null
 - `retryCount` reflects the number of attempts made (0 or 1)
+- If stretch features are enabled and eligible, `autoFixPrUrl`, `embedding`, `similarTo`, `failingTests`, and `flakyTests` may be populated
+- Stretch feature failures never affect `status` or primary diagnosis fields
 
 **Loop Invariant**: At the start of each iteration, `attempt ≤ MAX_RETRIES` and `record.status = "pending"` in the database
+
+---
+
+### Auto-Fix Pull Request Algorithm (stretch)
+
+```pascal
+PROCEDURE createFix(record, result)
+  INPUT: record BuildRecord, result ExtendedDiagnosisResult
+  OUTPUT: string (PR URL) or null
+
+  SEQUENCE
+    // Precondition checks
+    IF env.GITHUB_TOKEN IS NULL OR env.GITHUB_TOKEN = "" THEN
+      RETURN null
+    END IF
+    
+    IF env.GITHUB_REPO IS NULL OR env.GITHUB_REPO = "" THEN
+      RETURN null
+    END IF
+    
+    TRY
+      // Initialize GitHub client
+      github ← new Octokit({ auth: env.GITHUB_TOKEN })
+      [owner, repo] ← splitOwnerRepo(env.GITHUB_REPO)
+      
+      // Get default branch
+      repoInfo ← github.repos.get({ owner, repo })
+      defaultBranch ← repoInfo.data.default_branch
+      
+      // Get default branch SHA
+      branchRef ← github.git.getRef({ owner, repo, ref: "heads/" + defaultBranch })
+      baseSha ← branchRef.data.object.sha
+      
+      // Create new branch
+      branchName ← "cicd-doctor-fix/" + record.id
+      github.git.createRef({
+        owner: owner,
+        repo: repo,
+        ref: "refs/heads/" + branchName,
+        sha: baseSha
+      })
+      
+      // Get current file content if it exists (for blob update)
+      TRY
+        existingFile ← github.repos.getContent({
+          owner: owner,
+          repo: repo,
+          path: result.autoFixFile.path,
+          ref: defaultBranch
+        })
+        // File exists — we'll update it
+      CATCH NotFoundError
+        // File doesn't exist — we'll create it (no-op, just proceed)
+        existingFile ← null
+      END TRY
+      
+      // Create or update file
+      commitMessage ← "Auto-fix: " + result.category + " diagnosed in " + record.jobName
+      github.repos.createOrUpdateFileContents({
+        owner: owner,
+        repo: repo,
+        path: result.autoFixFile.path,
+        message: commitMessage,
+        content: base64Encode(result.autoFixFile.content),
+        branch: branchName,
+        sha: IF existingFile IS NOT NULL THEN existingFile.data.sha ELSE undefined
+      })
+      
+      // Create pull request
+      prTitle ← "Auto-fix: " + result.category + " in " + record.jobName
+      detailUrl ← env.APP_BASE_URL + "/diagnoses/" + record.id
+      prBody ← result.explanation + "\n\n---\n\n[View full diagnosis](" + detailUrl + ")"
+      
+      pr ← github.pulls.create({
+        owner: owner,
+        repo: repo,
+        title: prTitle,
+        body: prBody,
+        head: branchName,
+        base: defaultBranch
+      })
+      
+      RETURN pr.data.html_url
+      
+    CATCH GitHubAPIError, NetworkError AS err
+      LOG "Auto-fix failed for buildRecordId " + record.id + ": " + err.message
+      RETURN null
+    END TRY
+  END SEQUENCE
+END PROCEDURE
+```
+
+**Preconditions**:
+- `result.autoFixable = true`
+- `result.autoFixFile.path` and `result.autoFixFile.content` are non-empty
+- `record.category ∈ {"dependency-build-error", "docker-build-failure"}`
+- `record.confidence = "high"`
+
+**Postconditions**:
+- On success: returns GitHub PR URL (string)
+- On error: logs error message, returns null
+- Never throws exceptions — all errors caught internally
+
+---
+
+### Similarity Search Algorithm (stretch)
+
+```pascal
+PROCEDURE generateEmbedding(cleanedLog)
+  INPUT: cleanedLog string
+  OUTPUT: number[] or null
+
+  SEQUENCE
+    TRY
+      response ← llmAPI.embeddings.create({
+        model: "text-embedding-ada-002",  // or compatible model
+        input: cleanedLog
+      })
+      
+      embedding ← response.data[0].embedding  // array of floats
+      
+      IF embedding IS NULL OR length(embedding) = 0 THEN
+        RAISE ParseError("Empty embedding returned")
+      END IF
+      
+      RETURN embedding
+      
+    CATCH NetworkError, APIError, ParseError AS err
+      LOG "Embedding generation failed: " + err.message
+      RETURN null
+    END TRY
+  END SEQUENCE
+END PROCEDURE
+
+PROCEDURE findSimilar(embedding, currentRecordId)
+  INPUT: embedding number[], currentRecordId string
+  OUTPUT: SimilarMatch or null
+
+  SEQUENCE
+    TRY
+      // Query all complete records with embeddings, excluding current
+      candidates ← db.query(
+        "SELECT id, embedding, category, created_at FROM build_records 
+         WHERE status = 'complete' AND embedding IS NOT NULL AND id != ?
+         ORDER BY created_at DESC",
+        [currentRecordId]
+      )
+      
+      maxSimilarity ← 0.0
+      bestMatch ← null
+      
+      FOR EACH candidate IN candidates DO
+        // Loop Invariant: maxSimilarity ≤ 1.0 AND (bestMatch = null OR maxSimilarity > 0.85)
+        candidateEmbedding ← JSON.parse(candidate.embedding)
+        
+        // Compute cosine similarity
+        dotProduct ← 0.0
+        normA ← 0.0
+        normB ← 0.0
+        
+        FOR i ← 0 TO length(embedding) - 1 DO
+          dotProduct ← dotProduct + (embedding[i] * candidateEmbedding[i])
+          normA ← normA + (embedding[i] * embedding[i])
+          normB ← normB + (candidateEmbedding[i] * candidateEmbedding[i])
+        END FOR
+        
+        // Handle division by zero
+        IF normA = 0.0 OR normB = 0.0 THEN
+          CONTINUE  // skip this candidate
+        END IF
+        
+        similarity ← dotProduct / (sqrt(normA) * sqrt(normB))
+        
+        IF similarity > maxSimilarity AND similarity > 0.85 THEN
+          maxSimilarity ← similarity
+          bestMatch ← {
+            buildRecordId: candidate.id,
+            similarityScore: similarity
+          }
+        END IF
+      END FOR
+      
+      RETURN bestMatch  // may be null if no match > 0.85
+      
+    CATCH DatabaseError, ComputationError AS err
+      LOG "Similarity search failed: " + err.message
+      RETURN null
+    END TRY
+  END SEQUENCE
+END PROCEDURE
+```
+
+**Preconditions** (generateEmbedding):
+- `cleanedLog` is a non-empty string
+- `LLM_API_KEY` is set
+
+**Postconditions** (generateEmbedding):
+- On success: returns float array of length determined by embedding model (typically 1536 for ada-002)
+- On error: logs error, returns null
+
+**Preconditions** (findSimilar):
+- `embedding` is a non-empty float array
+- `currentRecordId` exists in database
+
+**Postconditions** (findSimilar):
+- Returns `SimilarMatch` with similarity > 0.85 if found, else null
+- Never modifies database
+- Computation completes within reasonable time for hackathon scale (<10,000 records)
+
+**Loop Invariant**: `maxSimilarity ≤ 1.0` AND (`bestMatch = null` OR `maxSimilarity > 0.85`)
+
+---
+
+### Flakiness Detection Algorithm (stretch)
+
+```pascal
+PROCEDURE checkFlaky(record)
+  INPUT: record BuildRecord
+  OUTPUT: FlakyTest[] or null
+
+  SEQUENCE
+    // Precondition check
+    IF record.category ≠ "test-failure" THEN
+      RETURN null
+    END IF
+    
+    IF record.failingTests IS NULL OR length(record.failingTests) = 0 THEN
+      RETURN null
+    END IF
+    
+    TRY
+      // Query last 10 test-failure builds for same repo (including current)
+      recentBuilds ← db.query(
+        "SELECT id, failing_tests FROM build_records 
+         WHERE repo_name = ? AND category = 'test-failure' AND failing_tests IS NOT NULL
+         ORDER BY created_at DESC
+         LIMIT 10",
+        [record.repoName]
+      )
+      
+      windowSize ← length(recentBuilds)
+      IF windowSize = 0 THEN
+        RETURN null
+      END IF
+      
+      // Count occurrences of each test name across window
+      testCounts ← new Map<string, number>()
+      
+      FOR EACH build IN recentBuilds DO
+        tests ← JSON.parse(build.failing_tests)
+        FOR EACH testName IN tests DO
+          IF testCounts.has(testName) THEN
+            testCounts.set(testName, testCounts.get(testName) + 1)
+          ELSE
+            testCounts.set(testName, 1)
+          END IF
+        END FOR
+      END FOR
+      
+      // Identify flaky tests (appear in 3+ builds)
+      flakyTests ← []
+      FOR EACH testName IN record.failingTests DO
+        count ← testCounts.get(testName) OR 0
+        IF count >= 3 THEN
+          flakyTests.push({
+            testName: testName,
+            failureRate: count + "/" + windowSize
+          })
+        END IF
+      END FOR
+      
+      IF length(flakyTests) = 0 THEN
+        RETURN null  // No flaky tests detected
+      END IF
+      
+      RETURN flakyTests
+      
+    CATCH DatabaseError, ParseError AS err
+      LOG "Flakiness detection failed for buildRecordId " + record.id + ": " + err.message
+      RETURN null
+    END TRY
+  END SEQUENCE
+END PROCEDURE
+```
+
+**Preconditions**:
+- `record.category = "test-failure"`
+- `record.failingTests` is a non-empty JSON-serialized string array
+- Database has index on `(repo_name, category, created_at)`
+
+**Postconditions**:
+- Returns array of `FlakyTest` objects for tests appearing in ≥3 of last 10 builds
+- Returns null if no flaky tests detected or on error
+- Never modifies input record
+- Query uses index, completes in <100ms for typical dataset
 
 ---
 
@@ -1101,6 +1603,30 @@ For all BuildRecords that enter the job queue, the record's `status` is set to e
 
 ---
 
+### Property 13: Auto-Fix Category Constraint (stretch)
+
+For all BuildRecords with non-null `auto_fix_pr_url`, the `category` is exactly `"dependency-build-error"` or `"docker-build-failure"` AND `confidence = "high"`.
+
+**Validates: Requirements 14.1**
+
+---
+
+### Property 14: Similarity Non-Interference (stretch)
+
+For all BuildRecords processed by SimilarityService, the presence or absence of non-null `embedding` and `similar_to` values does not modify the `category`, `explanation`, `suggested_fix`, or `confidence` fields. These stretch fields are purely additive.
+
+**Validates: Requirements 15.7**
+
+---
+
+### Property 15: Flakiness Non-Interference (stretch)
+
+For all BuildRecords processed by FlakinessTracker, the presence or absence of non-null `flaky_tests` values does not modify the `category`, `explanation`, `suggested_fix`, or `confidence` fields. This stretch field is purely additive.
+
+**Validates: Requirements 16.8**
+
+---
+
 ## Error Handling
 
 ### Scenario 1: Invalid Webhook Secret
@@ -1172,6 +1698,54 @@ For all BuildRecords that enter the job queue, the record's `status` is set to e
 **Condition**: The total `POST /webhook/ingest` request body exceeds the 10 MB Express body parser limit
 **Response**: Express rejects the request before the route handler runs; the handler returns `413 Payload Too Large` with body `{ error: "Payload too large" }`
 **Recovery**: CI system receives 413; developer should check whether the raw log is being sent in full (consider pre-truncating on the sender side before posting) and retry with a smaller payload
+
+---
+
+### Scenario 10: Auto-Fix Branch Already Exists (stretch)
+
+**Condition**: AutoFixService attempts to create branch `cicd-doctor-fix/{buildRecordId}` but a branch with that name already exists in the repository
+**Response**: GitHub API returns `422 Unprocessable Entity`; AutoFixService catches the error, logs "Branch already exists for buildRecordId {id}", returns `null`
+**Recovery**: `BuildRecord.auto_fix_pr_url` remains null; diagnosis completes with `status = "complete"`; dashboard shows diagnosis without auto-fix link; developer can manually delete the stale branch via GitHub UI and re-trigger if needed
+
+---
+
+### Scenario 11: Auto-Fix Insufficient Permissions (stretch)
+
+**Condition**: `GITHUB_TOKEN` lacks write permissions (read-only token or insufficient repo scope)
+**Response**: GitHub API returns `403 Forbidden` during branch creation or PR creation; AutoFixService catches, logs "Insufficient GitHub permissions for buildRecordId {id}: {error}", returns `null`
+**Recovery**: Same as Scenario 10; diagnosis succeeds, auto-fix silently disabled for that record; admin should verify `GITHUB_TOKEN` has `repo` scope
+
+---
+
+### Scenario 12: LLM Embeddings API Error (stretch)
+
+**Condition**: SimilarityService calls LLM embeddings endpoint but receives `500 Internal Server Error` or network timeout
+**Response**: SimilarityService catches the error, logs "Embedding generation failed for buildRecordId {id}: {error}", sets `embedding = null`, skips similarity search
+**Recovery**: Diagnosis completes with `status = "complete"` and all primary fields populated; `similar_to` remains null; dashboard shows diagnosis without similarity callout; user sees normal diagnosis result
+
+---
+
+### Scenario 13: Cosine Similarity Computation Overflow (stretch)
+
+**Condition**: SimilarityService computes cosine similarity between two embedding vectors but encounters a division-by-zero (zero-magnitude vector) or NaN result
+**Response**: SimilarityService catches the error during computation, logs "Similarity computation failed for buildRecordId {id}: division by zero or NaN", sets `similar_to = null`
+**Recovery**: Same as Scenario 12; diagnosis succeeds without similarity data
+
+---
+
+### Scenario 14: Flakiness Query Returns Fewer Than 10 Builds (stretch)
+
+**Condition**: FlakinessTracker queries for the 10 most recent test-failure builds for a repository but finds only 3 existing records (new repository or category)
+**Response**: FlakinessTracker proceeds with the 3 available records; computes flakiness rates as "N/3" instead of "N/10"
+**Recovery**: Diagnosis completes normally; flakiness detection works with smaller sample size; as more builds accumulate, the window expands naturally to 10
+
+---
+
+### Scenario 15: LLM Omits Optional Stretch Fields (stretch)
+
+**Condition**: LLM response for a test-failure diagnosis is valid JSON with required fields (`category`, `explanation`, `suggestedFix`, `confidence`) but omits optional stretch fields (`autoFixable`, `autoFixFile`, `failingTests`)
+**Response**: Job processor validates required fields successfully, proceeds to `status = "complete"`, skips auto-fix and flakiness processing for fields that are absent
+**Recovery**: Diagnosis completes normally with all primary data; stretch features are silently disabled for that record; no error logged (expected behavior when stretch data unavailable)
 
 ---
 
@@ -1324,6 +1898,7 @@ post {
 | `cors` | CORS middleware — restrict cross-origin requests to known frontend origins |
 | `express-rate-limit` | Per-IP rate limiting on `/webhook/ingest` and `/simulate` |
 | `nodemailer` | SMTP email sending for the stretch notification feature |
+| `@octokit/rest` | GitHub API client for auto-fix PR creation (stretch) |
 
 ### Frontend
 | Package | Purpose |
@@ -1364,6 +1939,10 @@ PORT=3000                        # Express listen port (default: 3000)
 SLACK_WEBHOOK_URL=               # If set, POST diagnosis summary to this Slack Incoming Webhook URL
 NOTIFICATION_EMAIL=              # If set, send diagnosis summary email to this address
 APP_BASE_URL=http://localhost:3000  # Base URL used to construct diagnosis detail links in notifications
+
+# ── Stretch: Auto-Fix Pull Requests (optional) ────────────────────────────────
+GITHUB_TOKEN=                    # GitHub personal access token with 'repo' scope; required for auto-fix PR creation
+GITHUB_REPO=                     # Target repository in 'owner/repo' format (e.g., 'acme/payments-service')
 
 # ── Stretch: CORS ─────────────────────────────────────────────────────────────
 # Configure the allowed frontend origin in your Express cors() config:

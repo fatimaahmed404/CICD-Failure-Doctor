@@ -9,6 +9,7 @@
 
 // ---- Boot-time guard (must be first) ----------------------------------------
 import { validateEnvironment } from "./startup.js";
+import "dotenv/config";
 validateEnvironment();
 
 // ---- Dependencies ------------------------------------------------------------

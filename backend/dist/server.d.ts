@@ -6,6 +6,7 @@
  *
  * Requirements: 11.2, 11.4
  */
+import "dotenv/config";
 import "./db/init.js";
 declare const app: import("express-serve-static-core").Express;
 export { app };
