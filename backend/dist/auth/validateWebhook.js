@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Webhook authentication helper.
  *
@@ -12,7 +13,9 @@
  *
  * Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 1.2, 1.5
  */
-import { timingSafeEqual } from "crypto";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateWebhookRequest = validateWebhookRequest;
+const crypto_1 = require("crypto");
 /**
  * Validates that the incoming request carries a correct `X-Webhook-Secret`
  * header.  Uses `crypto.timingSafeEqual` so comparison time is constant
@@ -22,7 +25,7 @@ import { timingSafeEqual } from "crypto";
  * `WEBHOOK_SECRET` is absent.  The 500-path here is a runtime fallback for
  * edge cases such as env-var mutation after startup (Req 9.5).
  */
-export function validateWebhookRequest(req) {
+function validateWebhookRequest(req) {
     const secret = process.env.WEBHOOK_SECRET;
     // Req 9.5 — server misconfiguration, not a client auth failure
     if (!secret) {
@@ -41,7 +44,7 @@ export function validateWebhookRequest(req) {
     const expectedBuf = Buffer.from(secret, "utf8");
     const actualBuf = Buffer.from(header, "utf8");
     if (expectedBuf.length !== actualBuf.length ||
-        !timingSafeEqual(expectedBuf, actualBuf)) {
+        !(0, crypto_1.timingSafeEqual)(expectedBuf, actualBuf)) {
         return { valid: false, statusCode: 401 };
     }
     return { valid: true, statusCode: null };

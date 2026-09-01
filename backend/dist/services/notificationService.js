@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Notification Service
  *
@@ -8,7 +9,12 @@
  *
  * Requirements: 12.1, 12.2, 12.3
  */
-import nodemailer from "nodemailer";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.notify = notify;
+const nodemailer_1 = __importDefault(require("nodemailer"));
 /**
  * Extracts the first sentence from a text string.
  * A sentence is defined as text ending with a period, exclamation mark,
@@ -60,7 +66,7 @@ async function sendSlackNotification(webhookUrl, category, excerpt, detailUrl) {
 async function sendEmailNotification(toAddress, category, excerpt, detailUrl) {
     try {
         // Configure SMTP transport
-        const transporter = nodemailer.createTransport({
+        const transporter = nodemailer_1.default.createTransport({
             host: process.env.SMTP_HOST || "smtp.gmail.com",
             port: parseInt(process.env.SMTP_PORT || "587", 10),
             secure: false, // true for 465, false for other ports
@@ -103,7 +109,7 @@ async function sendEmailNotification(toAddress, category, excerpt, detailUrl) {
  *
  * Requirements: 12.1, 12.2, 12.3
  */
-export async function notify(record, result) {
+async function notify(record, result) {
     const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL?.trim();
     const notificationEmail = process.env.NOTIFICATION_EMAIL?.trim();
     const appBaseUrl = (process.env.APP_BASE_URL || "http://localhost:3000").replace(/\/$/, "");

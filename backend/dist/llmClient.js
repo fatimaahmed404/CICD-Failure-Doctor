@@ -1,3 +1,4 @@
+"use strict";
 /**
  * LLM Client — wraps the OpenAI API to produce structured CI/CD failure diagnoses.
  *
@@ -8,8 +9,14 @@
  *
  * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7
  */
-import OpenAI from "openai";
-import { z } from "zod";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NetworkError = exports.LLMParseError = void 0;
+exports.diagnoseBuild = diagnoseBuild;
+const openai_1 = __importDefault(require("openai"));
+const zod_1 = require("zod");
 // ── Typed errors ──────────────────────────────────────────────────────────────
 /**
  * Thrown when the LLM returns a response that is not valid JSON,
@@ -18,7 +25,7 @@ import { z } from "zod";
  *
  * Requirements: 5.3
  */
-export class LLMParseError extends Error {
+class LLMParseError extends Error {
     rawResponse;
     constructor(message, rawResponse) {
         super(message);
@@ -26,6 +33,7 @@ export class LLMParseError extends Error {
         this.name = "LLMParseError";
     }
 }
+exports.LLMParseError = LLMParseError;
 /**
  * Thrown when the LLM API call fails due to a network error, connection
  * timeout (> 30 s), or a 5xx response from the API.
@@ -33,7 +41,7 @@ export class LLMParseError extends Error {
  *
  * Requirements: 5.3
  */
-export class NetworkError extends Error {
+class NetworkError extends Error {
     cause;
     constructor(message, cause) {
         super(message);
@@ -41,8 +49,9 @@ export class NetworkError extends Error {
         this.name = "NetworkError";
     }
 }
+exports.NetworkError = NetworkError;
 // ── Zod schema for DiagnosisResult ────────────────────────────────────────────
-const FailureCategorySchema = z.enum([
+const FailureCategorySchema = zod_1.z.enum([
     "dependency-build-error",
     "test-failure",
     "docker-build-failure",
@@ -57,11 +66,11 @@ const FailureCategorySchema = z.enum([
  *
  * Requirements: 5.4, 5.5
  */
-const DiagnosisResultSchema = z.object({
+const DiagnosisResultSchema = zod_1.z.object({
     category: FailureCategorySchema,
-    explanation: z.string().min(1, "explanation must be a non-empty string"),
-    suggestedFix: z.string().min(1, "suggestedFix must be a non-empty string"),
-    confidence: z.enum(["high", "medium", "low"]),
+    explanation: zod_1.z.string().min(1, "explanation must be a non-empty string"),
+    suggestedFix: zod_1.z.string().min(1, "suggestedFix must be a non-empty string"),
+    confidence: zod_1.z.enum(["high", "medium", "low"]),
 });
 // ── System prompt ─────────────────────────────────────────────────────────────
 /**
@@ -101,7 +110,7 @@ ${input.cleanedLog}
 let _client = null;
 function getClient() {
     if (!_client) {
-        _client = new OpenAI({
+        _client = new openai_1.default({
             apiKey: process.env.LLM_API_KEY,
             baseURL: process.env.LLM_BASE_URL, // undefined = OpenAI's default, set this for Groq
             timeout: 30_000, // 30-second timeout per Req 5.3
@@ -119,7 +128,7 @@ function getClient() {
  *
  * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5
  */
-export async function diagnoseBuild(input) {
+async function diagnoseBuild(input) {
     const model = process.env.LLM_MODEL ?? "gpt-4o-mini";
     const client = getClient();
     let raw;

@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Feedback data-access functions for the helpfulness feedback stretch feature.
  *
@@ -6,12 +7,16 @@
  *
  * Requirements: 13.2, 13.3
  */
-import { v4 as uuidv4 } from "uuid";
-import { db } from "./init.js";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FeedbackValidationError = void 0;
+exports.upsertFeedback = upsertFeedback;
+exports.getFeedbackStats = getFeedbackStats;
+const uuid_1 = require("uuid");
+const init_js_1 = require("./init.js");
 // ── Validation helpers ────────────────────────────────────────────────────────
 const VALID_RATINGS = new Set(["helpful", "unhelpful"]);
 /** Typed error thrown when insert-time validation fails. */
-export class FeedbackValidationError extends Error {
+class FeedbackValidationError extends Error {
     field;
     constructor(message, field) {
         super(message);
@@ -19,6 +24,7 @@ export class FeedbackValidationError extends Error {
         this.name = "FeedbackValidationError";
     }
 }
+exports.FeedbackValidationError = FeedbackValidationError;
 function validateRating(rating) {
     if (!VALID_RATINGS.has(rating)) {
         throw new FeedbackValidationError(`rating must be "helpful" or "unhelpful", got: "${rating}"`, "rating");
@@ -40,11 +46,11 @@ function rowToDomain(row) {
  *
  * Requirements: 13.2
  */
-export function upsertFeedback(buildRecordId, clientId, rating) {
+function upsertFeedback(buildRecordId, clientId, rating) {
     validateRating(rating);
-    const id = uuidv4();
+    const id = (0, uuid_1.v4)();
     const createdAt = new Date().toISOString();
-    const stmt = db.prepare(`
+    const stmt = init_js_1.db.prepare(`
     INSERT OR REPLACE INTO feedback
       (id, build_record_id, client_id, rating, created_at)
     VALUES
@@ -58,7 +64,7 @@ export function upsertFeedback(buildRecordId, clientId, rating) {
         created_at: createdAt,
     });
     // Return the freshly upserted record
-    const getStmt = db.prepare("SELECT * FROM feedback WHERE build_record_id = ? AND client_id = ?");
+    const getStmt = init_js_1.db.prepare("SELECT * FROM feedback WHERE build_record_id = ? AND client_id = ?");
     const row = getStmt.get(buildRecordId, clientId);
     return rowToDomain(row);
 }
@@ -69,7 +75,7 @@ export function upsertFeedback(buildRecordId, clientId, rating) {
  *
  * Requirements: 13.3
  */
-export function getFeedbackStats() {
+function getFeedbackStats() {
     const allCategories = [
         "dependency-build-error",
         "test-failure",
@@ -90,7 +96,7 @@ export function getFeedbackStats() {
     WHERE br.category IS NOT NULL
     GROUP BY br.category
   `;
-    const rows = db.prepare(query).all();
+    const rows = init_js_1.db.prepare(query).all();
     // Build a map of category → stats
     const statsMap = new Map();
     for (const row of rows) {

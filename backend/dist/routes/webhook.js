@@ -1,3 +1,4 @@
+"use strict";
 /**
  * POST /webhook/ingest
  *
@@ -14,12 +15,16 @@
  *
  * Requirements: 1.1, 1.2, 1.3, 1.4, 1.6, 1.7
  */
-import express from "express";
-import { validateWebhookRequest } from "../auth/validateWebhook.js";
-import { ingestBuild, IngestValidationError, } from "../services/ingestBuild.js";
-const router = express.Router();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const validateWebhook_js_1 = require("../auth/validateWebhook.js");
+const ingestBuild_js_1 = require("../services/ingestBuild.js");
+const router = express_1.default.Router();
 // ── Body parser with 10 MB limit (Req 1.6) ───────────────────────────────────
-const jsonBodyParser = express.json({ limit: "10mb" });
+const jsonBodyParser = express_1.default.json({ limit: "10mb" });
 // ── Allowed sources for the webhook path ─────────────────────────────────────
 const WEBHOOK_SOURCES = new Set(["github", "jenkins"]);
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -41,7 +46,7 @@ jsonBodyParser,
 // 3. Business logic handler
 async (req, res) => {
     // ── Authentication (Req 1.2, 9.x) ──────────────────────────────────────
-    const authResult = validateWebhookRequest(req);
+    const authResult = (0, validateWebhook_js_1.validateWebhookRequest)(req);
     if (!authResult.valid) {
         res.status(authResult.statusCode ?? 401).json({
             error: authResult.statusCode === 500
@@ -69,11 +74,11 @@ async (req, res) => {
     const source = rawSource;
     // ── Ingest (validates remaining fields, persists record, enqueues job) ──
     try {
-        const record = await ingestBuild(body, source);
+        const record = await (0, ingestBuild_js_1.ingestBuild)(body, source);
         res.status(202).json({ id: record.id, status: "pending" });
     }
     catch (err) {
-        if (err instanceof IngestValidationError) {
+        if (err instanceof ingestBuild_js_1.IngestValidationError) {
             // Req 1.3 — missing / blank / malformed fields
             res.status(400).json({ error: err.message, details: err.details });
             return;
@@ -82,5 +87,5 @@ async (req, res) => {
         throw err;
     }
 });
-export default router;
+exports.default = router;
 //# sourceMappingURL=webhook.js.map

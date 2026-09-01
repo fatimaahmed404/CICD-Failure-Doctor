@@ -1,13 +1,20 @@
-import Database from "better-sqlite3";
-import path from "path";
-import fs from "fs";
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.db = void 0;
+const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
+const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
 const DATABASE_PATH = process.env.DATABASE_PATH ?? "./data/cicd-doctor.db";
 // Ensure the parent directory exists before opening the file
-const dbDir = path.dirname(DATABASE_PATH);
-if (!fs.existsSync(dbDir)) {
-    fs.mkdirSync(dbDir, { recursive: true });
+const dbDir = path_1.default.dirname(DATABASE_PATH);
+if (!fs_1.default.existsSync(dbDir)) {
+    fs_1.default.mkdirSync(dbDir, { recursive: true });
 }
-const db = new Database(DATABASE_PATH);
+const db = new better_sqlite3_1.default(DATABASE_PATH);
+exports.db = db;
 // Enable WAL mode for better concurrent read performance
 db.pragma("journal_mode = WAL");
 // Create the build_records table (idempotent)
@@ -60,5 +67,4 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_feedback_category
     ON feedback(build_record_id);
 `);
-export { db };
 //# sourceMappingURL=init.js.map

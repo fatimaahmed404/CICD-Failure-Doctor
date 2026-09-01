@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Feedback API routes (stretch feature).
  *
@@ -6,10 +7,13 @@
  *
  * Requirements: 13.2, 13.3, 13.4
  */
-import { Router } from "express";
-import { getBuildRecordById } from "../db/buildRecords.js";
-import { upsertFeedback, getFeedbackStats, FeedbackValidationError, } from "../db/feedback.js";
-const router = Router();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.feedbackRouter = void 0;
+const express_1 = require("express");
+const buildRecords_js_1 = require("../db/buildRecords.js");
+const feedback_js_1 = require("../db/feedback.js");
+const router = (0, express_1.Router)();
+exports.feedbackRouter = router;
 // ── POST /diagnoses/:id/feedback ──────────────────────────────────────────────
 /**
  * Submits a helpfulness rating for a diagnosis.
@@ -48,13 +52,13 @@ router.post("/:id/feedback", (req, res) => {
         return;
     }
     // Verify the diagnosis exists
-    const buildRecord = getBuildRecordById(buildRecordId);
+    const buildRecord = (0, buildRecords_js_1.getBuildRecordById)(buildRecordId);
     if (!buildRecord) {
         res.status(400).json({ error: "Diagnosis not found" });
         return;
     }
     try {
-        const feedbackRecord = upsertFeedback(buildRecordId, clientId, rating);
+        const feedbackRecord = (0, feedback_js_1.upsertFeedback)(buildRecordId, clientId, rating);
         // Return FeedbackResponse
         res.status(200).json({
             id: feedbackRecord.id,
@@ -65,7 +69,7 @@ router.post("/:id/feedback", (req, res) => {
         });
     }
     catch (err) {
-        if (err instanceof FeedbackValidationError) {
+        if (err instanceof feedback_js_1.FeedbackValidationError) {
             res.status(400).json({ error: err.message });
             return;
         }
@@ -84,11 +88,10 @@ router.post("/:id/feedback", (req, res) => {
  *  - 200 { stats: FailureCategoryStats[] }
  */
 router.get("/stats", (_req, res) => {
-    const stats = getFeedbackStats();
+    const stats = (0, feedback_js_1.getFeedbackStats)();
     const response = {
         stats,
     };
     res.status(200).json(response);
 });
-export { router as feedbackRouter };
 //# sourceMappingURL=feedback.js.map

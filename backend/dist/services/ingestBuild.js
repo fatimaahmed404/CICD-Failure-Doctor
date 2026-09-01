@@ -1,3 +1,4 @@
+"use strict";
 /**
  * ingestBuild service
  *
@@ -7,14 +8,17 @@
  *
  * Requirements: 1.1, 1.3, 1.4, 10.2, 10.3, 10.4
  */
-import { insertBuildRecord } from "../db/buildRecords.js";
-import { enqueue } from "../jobQueue.js";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.IngestValidationError = void 0;
+exports.ingestBuild = ingestBuild;
+const buildRecords_js_1 = require("../db/buildRecords.js");
+const jobQueue_js_1 = require("../jobQueue.js");
 // ── Validation error ──────────────────────────────────────────────────────────
 /**
  * Thrown by `ingestBuild` when one or more required fields fail validation.
  * The route handler maps this to HTTP 400 `{ error, details }`.
  */
-export class IngestValidationError extends Error {
+class IngestValidationError extends Error {
     details;
     constructor(details) {
         super("Validation failed");
@@ -22,6 +26,7 @@ export class IngestValidationError extends Error {
         this.details = details;
     }
 }
+exports.IngestValidationError = IngestValidationError;
 // ── Validation helpers ────────────────────────────────────────────────────────
 const COMMIT_SHA_RE = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/i;
 const VALID_SOURCES = new Set([
@@ -42,7 +47,7 @@ function isPresent(value) {
  *
  * Requirements: 1.1, 1.3, 1.4, 10.2, 10.3, 10.4
  */
-export async function ingestBuild(payload, source) {
+async function ingestBuild(payload, source) {
     const details = [];
     // ── Required field presence checks ───────────────────────────────────────
     if (!isPresent(payload.log)) {
@@ -70,7 +75,7 @@ export async function ingestBuild(payload, source) {
     }
     // ── Persist (insertBuildRecord also validates commitSha + source as
     //    a defence-in-depth check — those errors would be unexpected here) ────
-    const record = insertBuildRecord({
+    const record = (0, buildRecords_js_1.insertBuildRecord)({
         repoName: payload.repoName,
         jobName: payload.jobName,
         commitSha: payload.commitSha,
@@ -79,7 +84,7 @@ export async function ingestBuild(payload, source) {
         branch: payload.branch ?? null,
     });
     // ── Enqueue — synchronous hand-off to the in-process queue ───────────────
-    enqueue({ buildRecordId: record.id });
+    (0, jobQueue_js_1.enqueue)({ buildRecordId: record.id });
     return record;
 }
 //# sourceMappingURL=ingestBuild.js.map
