@@ -11,8 +11,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { join } from "path";
 import { ingestBuild, IngestValidationError } from "../services/ingestBuild.js";
 import type { SimulationScenario } from "../types.js";
 
@@ -48,8 +47,6 @@ const SCENARIO_COMMIT_SHAS: Record<SimulationScenario, string> = {
 
 // Resolve the fixtures directory relative to this source file so it works
 // regardless of the current working directory when the server is started.
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 const FIXTURES_DIR = join(__dirname, "../../fixtures");
 
 // ── Helper ────────────────────────────────────────────────────────────────────
