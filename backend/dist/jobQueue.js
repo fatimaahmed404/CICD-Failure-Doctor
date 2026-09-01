@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Async Job Queue
  *
@@ -14,11 +15,17 @@
  *
  * Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 6.1, 6.2, 6.3, 6.4
  */
-import PQueue from "p-queue";
-import { getBuildRecordById, updateBuildRecord } from "./db/buildRecords.js";
-import { truncateLog } from "./logProcessor.js";
-import { diagnoseBuild, LLMParseError, NetworkError } from "./llmClient.js";
-import { notify } from "./services/notificationService.js";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.processJob = processJob;
+exports.enqueue = enqueue;
+const p_queue_1 = __importDefault(require("p-queue"));
+const buildRecords_js_1 = require("./db/buildRecords.js");
+const logProcessor_js_1 = require("./logProcessor.js");
+const llmClient_js_1 = require("./llmClient.js");
+const notificationService_js_1 = require("./services/notificationService.js");
 // ── Constants ─────────────────────────────────────────────────────────────────
 /** Maximum LLM attempts: initial call + 1 retry for NetworkError. */
 const MAX_ATTEMPTS = 2;
@@ -27,7 +34,7 @@ const RETRY_DELAY_MS = 1_000;
 /** SLA deadline (ms) per job — Req 3.5. */
 const SLA_TIMEOUT_MS = 120_000;
 // ── In-process queue ──────────────────────────────────────────────────────────
-const queue = new PQueue({ concurrency: 2 });
+const queue = new p_queue_1.default({ concurrency: 2 });
 // ── Helpers ───────────────────────────────────────────────────────────────────
 /** Returns a Promise that rejects after `ms` milliseconds. */
 function timeoutReject(ms) {
@@ -59,17 +66,17 @@ function sleep(ms) {
  *
  * Requirements: 3.1, 3.2, 3.3, 3.4, 6.1, 6.2, 6.3, 6.4
  */
-export async function processJob(job) {
+async function processJob(job) {
     const { buildRecordId } = job;
     // ── Fetch record ──────────────────────────────────────────────────────────
-    const record = getBuildRecordById(buildRecordId);
+    const record = (0, buildRecords_js_1.getBuildRecordById)(buildRecordId);
     if (!record) {
         console.warn(`[jobQueue] BuildRecord not found, skipping job: ${buildRecordId}`);
         return;
     }
     // ── Log truncation ────────────────────────────────────────────────────────
-    const truncateResult = truncateLog(record.rawLog);
-    updateBuildRecord(buildRecordId, {
+    const truncateResult = (0, logProcessor_js_1.truncateLog)(record.rawLog);
+    (0, buildRecords_js_1.updateBuildRecord)(buildRecordId, {
         cleanedLog: truncateResult.cleanedLog,
         truncated: truncateResult.truncated,
     });
@@ -78,14 +85,14 @@ export async function processJob(job) {
     let lastError;
     while (attempt < MAX_ATTEMPTS) {
         try {
-            const result = await diagnoseBuild({
+            const result = await (0, llmClient_js_1.diagnoseBuild)({
                 cleanedLog: truncateResult.cleanedLog,
                 repoName: record.repoName,
                 jobName: record.jobName,
                 source: record.source,
             });
             // ── Success ───────────────────────────────────────────────────────────
-            updateBuildRecord(buildRecordId, {
+            (0, buildRecords_js_1.updateBuildRecord)(buildRecordId, {
                 status: "complete",
                 category: result.category,
                 explanation: result.explanation,
@@ -95,11 +102,11 @@ export async function processJob(job) {
             });
             // Fire-and-forget notification — never block or affect BuildRecord status.
             // Re-fetch to get the fully populated record for the notification payload.
-            const completedRecord = getBuildRecordById(buildRecordId);
+            const completedRecord = (0, buildRecords_js_1.getBuildRecordById)(buildRecordId);
             if (completedRecord) {
                 (async () => {
                     try {
-                        await notify(completedRecord, result);
+                        await (0, notificationService_js_1.notify)(completedRecord, result);
                     }
                     catch (notifErr) {
                         console.error("[jobQueue] Notification failed:", notifErr);
@@ -109,9 +116,9 @@ export async function processJob(job) {
             return;
         }
         catch (err) {
-            if (err instanceof LLMParseError) {
+            if (err instanceof llmClient_js_1.LLMParseError) {
                 // Parse errors are not retryable — fail immediately.
-                updateBuildRecord(buildRecordId, {
+                (0, buildRecords_js_1.updateBuildRecord)(buildRecordId, {
                     status: "unavailable",
                     retryCount: attempt,
                     errorMessage: err.message,
@@ -119,7 +126,7 @@ export async function processJob(job) {
                 console.error(`[jobQueue] LLMParseError for ${buildRecordId}:`, err.message);
                 return;
             }
-            if (err instanceof NetworkError) {
+            if (err instanceof llmClient_js_1.NetworkError) {
                 lastError = err;
                 attempt += 1;
                 if (attempt < MAX_ATTEMPTS) {
@@ -134,7 +141,7 @@ export async function processJob(job) {
         }
     }
     // ── All attempts exhausted (or unexpected error) ──────────────────────────
-    updateBuildRecord(buildRecordId, {
+    (0, buildRecords_js_1.updateBuildRecord)(buildRecordId, {
         status: "unavailable",
         retryCount: Math.min(attempt, MAX_ATTEMPTS - 1), // 0 or 1
         errorMessage: lastError?.message ?? "Unknown error",
@@ -156,7 +163,7 @@ async function processJobWithSLA(job) {
     catch (err) {
         if (err instanceof SLATimeoutError) {
             console.error(`[jobQueue] SLA timeout for ${job.buildRecordId}: ${err.message}`);
-            updateBuildRecord(job.buildRecordId, {
+            (0, buildRecords_js_1.updateBuildRecord)(job.buildRecordId, {
                 status: "unavailable",
                 errorMessage: "Diagnosis SLA timeout: exceeded 120 s",
             });
@@ -165,7 +172,7 @@ async function processJobWithSLA(job) {
             // Unexpected error that escaped processJob — log and mark unavailable.
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[jobQueue] Unexpected error for ${job.buildRecordId}:`, msg);
-            updateBuildRecord(job.buildRecordId, {
+            (0, buildRecords_js_1.updateBuildRecord)(job.buildRecordId, {
                 status: "unavailable",
                 errorMessage: msg,
             });
@@ -179,7 +186,7 @@ async function processJobWithSLA(job) {
  *
  * Requirements: 3.1
  */
-export function enqueue(job) {
+function enqueue(job) {
     queue.add(() => processJobWithSLA(job)).catch((err) => {
         // p-queue itself should not reject for non-priority queues, but guard anyway.
         console.error("[jobQueue] Unexpected queue error:", err);

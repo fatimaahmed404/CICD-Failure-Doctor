@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Diagnoses API routes.
  *
@@ -7,9 +8,12 @@
  *
  * Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 11.4
  */
-import { Router } from "express";
-import { getBuildRecordById, listBuildRecords, } from "../db/buildRecords.js";
-const router = Router();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.diagnosesRouter = void 0;
+const express_1 = require("express");
+const buildRecords_js_1 = require("../db/buildRecords.js");
+const router = (0, express_1.Router)();
+exports.diagnosesRouter = router;
 // ── Valid FailureCategory values (kept in sync with types.ts) ─────────────────
 const VALID_CATEGORIES = new Set([
     "dependency-build-error",
@@ -83,7 +87,7 @@ router.get("/", (req, res) => {
     const category = rawCategory && VALID_CATEGORIES.has(rawCategory)
         ? rawCategory
         : null;
-    const result = listBuildRecords({ page, limit, category });
+    const result = (0, buildRecords_js_1.listBuildRecords)({ page, limit, category });
     const response = {
         data: result.data.map(toSummary),
         total: result.total,
@@ -101,12 +105,11 @@ router.get("/", (req, res) => {
  */
 router.get("/:id", (req, res) => {
     const id = req.params["id"];
-    const record = getBuildRecordById(id);
+    const record = (0, buildRecords_js_1.getBuildRecordById)(id);
     if (!record) {
         res.status(404).json({ error: "Not found" });
         return;
     }
     res.status(200).json(toDetail(record));
 });
-export { router as diagnosesRouter };
 //# sourceMappingURL=diagnoses.js.map

@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Boot-time environment variable guard.
  *
@@ -6,8 +7,10 @@
  *
  * Requirements: 11.2
  */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateEnvironment = validateEnvironment;
 const REQUIRED_ENV_VARS = ["WEBHOOK_SECRET", "LLM_API_KEY"];
-export function validateEnvironment() {
+function validateEnvironment() {
     const missing = [];
     for (const key of REQUIRED_ENV_VARS) {
         if (!process.env[key]) {

@@ -1,3 +1,4 @@
+"use strict";
 /**
  * BuildRecord data-access functions.
  *
@@ -6,8 +7,14 @@
  *
  * Requirements: 10.2, 10.3, 10.4, 10.6
  */
-import { v4 as uuidv4 } from "uuid";
-import { db } from "./init.js";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BuildRecordValidationError = void 0;
+exports.insertBuildRecord = insertBuildRecord;
+exports.getBuildRecordById = getBuildRecordById;
+exports.updateBuildRecord = updateBuildRecord;
+exports.listBuildRecords = listBuildRecords;
+const uuid_1 = require("uuid");
+const init_js_1 = require("./init.js");
 // ── Validation helpers ────────────────────────────────────────────────────────
 const COMMIT_SHA_RE = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/i;
 const VALID_SOURCES = new Set([
@@ -16,7 +23,7 @@ const VALID_SOURCES = new Set([
     "simulate",
 ]);
 /** Typed error thrown when insert-time validation fails. */
-export class BuildRecordValidationError extends Error {
+class BuildRecordValidationError extends Error {
     field;
     constructor(message, field) {
         super(message);
@@ -24,6 +31,7 @@ export class BuildRecordValidationError extends Error {
         this.name = "BuildRecordValidationError";
     }
 }
+exports.BuildRecordValidationError = BuildRecordValidationError;
 function validateCommitSha(commitSha) {
     if (!COMMIT_SHA_RE.test(commitSha)) {
         throw new BuildRecordValidationError(`commitSha must be a 40- or 64-character hexadecimal string, got: "${commitSha}"`, "commitSha");
@@ -64,12 +72,12 @@ function rowToDomain(row) {
  *
  * Requirements: 10.2, 10.3, 10.4
  */
-export function insertBuildRecord(input) {
+function insertBuildRecord(input) {
     validateCommitSha(input.commitSha);
     validateSource(input.source);
-    const id = uuidv4();
+    const id = (0, uuid_1.v4)();
     const createdAt = new Date().toISOString();
-    const stmt = db.prepare(`
+    const stmt = init_js_1.db.prepare(`
     INSERT INTO build_records
       (id, repo_name, job_name, commit_sha, branch, source, raw_log,
        cleaned_log, truncated, status, category, explanation, suggested_fix,
@@ -106,8 +114,8 @@ export function insertBuildRecord(input) {
 /**
  * Returns the BuildRecord for the given id, or `null` if not found.
  */
-export function getBuildRecordById(id) {
-    const stmt = db.prepare("SELECT * FROM build_records WHERE id = ?");
+function getBuildRecordById(id) {
+    const stmt = init_js_1.db.prepare("SELECT * FROM build_records WHERE id = ?");
     const row = stmt.get(id);
     return row ? rowToDomain(row) : null;
 }
@@ -120,7 +128,7 @@ export function getBuildRecordById(id) {
  *
  * Requirements: 10.6
  */
-export function updateBuildRecord(id, input) {
+function updateBuildRecord(id, input) {
     // Determine whether to set completedAt
     const isTerminal = input.status === "complete" || input.status === "unavailable";
     const setClauses = [];
@@ -171,7 +179,7 @@ export function updateBuildRecord(id, input) {
         return; // nothing to update
     }
     const sql = `UPDATE build_records SET ${setClauses.join(", ")} WHERE id = @id`;
-    db.prepare(sql).run(params);
+    init_js_1.db.prepare(sql).run(params);
 }
 /**
  * Returns a paginated, optionally category-filtered list of BuildRecords
@@ -180,7 +188,7 @@ export function updateBuildRecord(id, input) {
  * If `page` is beyond the last page, returns an empty `data` array with
  * the correct `total` (not an error). Requirements: 7.6
  */
-export function listBuildRecords(options = {}) {
+function listBuildRecords(options = {}) {
     const page = Math.max(1, options.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, options.limit ?? 20));
     const offset = (page - 1) * pageSize;
@@ -193,12 +201,12 @@ export function listBuildRecords(options = {}) {
         filterParams.category = category;
     }
     // Total count for the current filter
-    const countRow = db
+    const countRow = init_js_1.db
         .prepare(`SELECT COUNT(*) AS total FROM build_records ${whereClause}`)
         .get(filterParams);
     const total = countRow?.total ?? 0;
     // Data rows
-    const rows = db
+    const rows = init_js_1.db
         .prepare(`SELECT * FROM build_records ${whereClause}
        ORDER BY created_at DESC
        LIMIT @limit OFFSET @offset`)

@@ -1,3 +1,4 @@
+"use strict";
 /**
  * POST /simulate route
  *
@@ -8,12 +9,12 @@
  *
  * Requirements: 2.1, 2.2, 2.3, 2.4
  */
-import { Router } from "express";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-import { ingestBuild, IngestValidationError } from "../services/ingestBuild.js";
-const router = Router();
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const fs_1 = require("fs");
+const path_1 = require("path");
+const ingestBuild_js_1 = require("../services/ingestBuild.js");
+const router = (0, express_1.Router)();
 // ── Constants ─────────────────────────────────────────────────────────────────
 const VALID_SCENARIOS = new Set([
     "test-failure",
@@ -40,14 +41,12 @@ const SCENARIO_COMMIT_SHAS = {
 };
 // Resolve the fixtures directory relative to this source file so it works
 // regardless of the current working directory when the server is started.
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const FIXTURES_DIR = join(__dirname, "../../fixtures");
+const FIXTURES_DIR = (0, path_1.join)(__dirname, "../../fixtures");
 // ── Helper ────────────────────────────────────────────────────────────────────
 /** Synchronously reads the fixture log for a given scenario. */
 function loadFixtureLog(scenario) {
-    const filePath = join(FIXTURES_DIR, `${scenario}.log`);
-    return readFileSync(filePath, "utf-8");
+    const filePath = (0, path_1.join)(FIXTURES_DIR, `${scenario}.log`);
+    return (0, fs_1.readFileSync)(filePath, "utf-8");
 }
 // ── Route ─────────────────────────────────────────────────────────────────────
 /**
@@ -101,7 +100,7 @@ router.post("/", async (req, res) => {
     };
     // ── Ingest (same path as real webhook) ────────────────────────────────────
     try {
-        const record = await ingestBuild(payload, "simulate");
+        const record = await (0, ingestBuild_js_1.ingestBuild)(payload, "simulate");
         res.status(202).json({
             id: record.id,
             scenario,
@@ -109,7 +108,7 @@ router.post("/", async (req, res) => {
         });
     }
     catch (err) {
-        if (err instanceof IngestValidationError) {
+        if (err instanceof ingestBuild_js_1.IngestValidationError) {
             // Unexpected — synthetic payload should always be valid, but guard anyway
             res.status(400).json({
                 error: err.message,
@@ -122,5 +121,5 @@ router.post("/", async (req, res) => {
         }
     }
 });
-export default router;
+exports.default = router;
 //# sourceMappingURL=simulate.js.map

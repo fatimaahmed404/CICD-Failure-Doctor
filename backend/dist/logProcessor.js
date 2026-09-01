@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Log Processor
  *
@@ -7,7 +8,12 @@
  * Design doc: Component 4 — Log Processor
  * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
  */
-import stripAnsi from "strip-ansi";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.truncateLog = truncateLog;
+const strip_ansi_1 = __importDefault(require("strip-ansi"));
 // ── Defaults ──────────────────────────────────────────────────────────────────
 const DEFAULT_MAX_LINES = 300;
 const DEFAULT_TAIL_LINES = 200;
@@ -20,7 +26,7 @@ const CONTROL_CHARS_RE = /[\r\b\u0007]/g;
  * Clean a single string: remove ANSI codes, then strip control characters.
  */
 function cleanLine(raw) {
-    return stripAnsi(raw).replace(CONTROL_CHARS_RE, "");
+    return (0, strip_ansi_1.default)(raw).replace(CONTROL_CHARS_RE, "");
 }
 /**
  * Truncate and clean a raw build log.
@@ -35,7 +41,7 @@ function cleanLine(raw) {
  *   4. Outputs: [truncation header] + keyword-only block + tail block.
  *   5. Total output lines ≤ maxLines + 1 (header counts as one line).
  */
-export function truncateLog(rawLog, options) {
+function truncateLog(rawLog, options) {
     const maxLines = options?.maxLines ?? DEFAULT_MAX_LINES;
     const tailLines = options?.tailLines ?? DEFAULT_TAIL_LINES;
     const keywordLines = options?.keywordLines ?? DEFAULT_KEYWORD_LINES;

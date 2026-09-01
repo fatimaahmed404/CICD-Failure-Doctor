@@ -2,7 +2,7 @@
   "name": "cicd-failure-doctor-backend",
   "version": "1.0.0",
   "description": "CI/CD Failure Doctor backend — Node.js/Express API with SQLite and LLM-based log analysis",
-  "type": "module",
+  "type": "commonjs",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
