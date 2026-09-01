@@ -26,7 +26,8 @@ import { feedbackRouter } from "./routes/feedback.js";
 // ---- CORS configuration ------------------------------------------------------
 const CORS_ORIGINS = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
-  : ["http://localhost:5173"];
+  : ["http://localhost:5173",
+    "https://cicd-failure-doctor-1.onrender.com"];
 
 // ---- Rate limiter (task 11.2) ------------------------------------------------
 // Applied only to POST /webhook/ingest and POST /simulate.
