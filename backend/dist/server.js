@@ -13,9 +13,9 @@ validateEnvironment();
 // ---- Dependencies ------------------------------------------------------------
 import express from "express";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
 // Initialize the SQLite database and run schema migrations at startup
 import "./db/init.js";
+import { rateLimit } from "express-rate-limit";
 import { diagnosesRouter } from "./routes/diagnoses.js";
 import webhookRouter from "./routes/webhook.js";
 import simulateRouter from "./routes/simulate.js";
