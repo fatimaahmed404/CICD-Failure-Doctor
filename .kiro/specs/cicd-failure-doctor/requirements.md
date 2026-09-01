@@ -21,6 +21,9 @@ CI/CD Failure Doctor is a web application that automatically receives failed bui
 - **SimulationScenario**: One of the six pre-defined demo scenarios with bundled sample logs
 - **WEBHOOK_SECRET**: The shared-secret environment variable used to authenticate incoming webhook requests
 - **LLM_API_KEY**: The environment variable holding the LLM provider API key
+- **AutoFixService**: The module that automatically creates GitHub pull requests with suggested fixes for mechanically fixable failures
+- **SimilarityService**: The module that computes embedding vectors and identifies previously diagnosed similar failures
+- **FlakinessTracker**: The module that detects intermittently failing tests by analyzing failure patterns across recent builds
 
 ---
 
@@ -217,3 +220,54 @@ CI/CD Failure Doctor is a web application that automatically receives failed bui
 2. WHERE helpfulness feedback is enabled, WHEN a user submits a thumbs-up or thumbs-down rating for a diagnosis, THE Backend SHALL persist exactly one feedback record per diagnosis per user, associating the binary rating value and the corresponding BuildRecord identifier, and replace any prior rating from that user for the same diagnosis.
 3. WHERE helpfulness feedback is enabled, WHEN helpfulness statistics are requested, THE Diagnoses_API SHALL return, for each failure category, the total count of helpful ratings and the total count of unhelpful ratings, returning zero for each count when no ratings exist for that category.
 4. IF a user submits a rating with an invalid value (not thumbs-up or thumbs-down), THEN THE Backend SHALL reject the request and return an error response indicating the rating value is invalid, without persisting any data.
+
+---
+
+### Requirement 14: Stretch — Auto-Fix Pull Requests
+
+**User Story:** As a developer, I want the system to automatically open a GitHub pull request with the suggested fix when the diagnosis is mechanically fixable and confidence is high, so that I can apply the fix with one click instead of manually copying and editing files.
+
+#### Acceptance Criteria
+
+1. WHERE auto-fix is enabled, WHEN a BuildRecord transitions to `status = "complete"` with `category` equal to `"dependency-build-error"` or `"docker-build-failure"` AND `confidence = "high"` AND the LLM response includes `autoFixable = true` with a populated `autoFixFile` object containing non-empty `path` and `content` fields, THE AutoFixService SHALL create a new Git branch named `cicd-doctor-fix/{buildRecordId}`, commit the file specified in `autoFixFile.path` with content from `autoFixFile.content`, and open a GitHub pull request targeting the default branch of the repository identified by the `GITHUB_REPO` environment variable.
+2. WHERE auto-fix is enabled, WHEN a pull request is successfully created, THE AutoFixService SHALL set the PR title to `"Auto-fix: {category} in {jobName}"` and the PR body to a formatted message containing the diagnosis explanation and a link to the diagnosis detail page constructed from `APP_BASE_URL` and the BuildRecord `id`.
+3. WHERE auto-fix is enabled, WHEN a pull request is successfully created, THE AutoFixService SHALL update the BuildRecord with `auto_fix_pr_url` set to the GitHub PR URL returned by the GitHub API.
+4. WHERE auto-fix is enabled, WHEN the Dashboard displays a diagnosis detail view for a BuildRecord with a non-null `auto_fix_pr_url` field, THE Dashboard SHALL render a prominent "View Auto-Fix PR" button or link that opens the PR URL in a new browser tab.
+5. THE AutoFixService SHALL only attempt to create a pull request when both `GITHUB_TOKEN` and `GITHUB_REPO` environment variables are set to non-empty values; if either is absent or empty, auto-fix SHALL be silently disabled.
+6. IF the AutoFixService encounters an error during branch creation, commit, or pull request creation (network error, GitHub API 4xx/5xx, insufficient permissions, or branch already exists), THEN THE AutoFixService SHALL log the error message and leave `auto_fix_pr_url` as null, without modifying the BuildRecord `status` or any diagnosis fields.
+7. THE Job_Queue SHALL invoke AutoFixService asynchronously after persisting `status = "complete"` and diagnosis fields, ensuring that auto-fix failures never delay or block the transition to `status = "complete"`.
+8. THE LLM_Client SHALL extend the system prompt to request an additional `autoFixable` boolean field and an `autoFixFile` object containing `path` and `content` fields when the failure is mechanically fixable with a single-file change; if the LLM returns a response without these fields, auto-fix SHALL be skipped for that diagnosis without error.
+
+---
+
+### Requirement 15: Stretch — Failure Memory (Similarity Search)
+
+**User Story:** As a developer, I want to see whether a new failure resembles a previously diagnosed failure, so that I can learn from past solutions and identify recurring issues without manually searching through history.
+
+#### Acceptance Criteria
+
+1. WHERE similarity search is enabled, WHEN the Job_Queue processes a BuildRecord and the cleaned log is available, THE SimilarityService SHALL generate an embedding vector for the cleaned log by calling the LLM embeddings API endpoint using the `LLM_API_KEY` environment variable.
+2. WHERE similarity search is enabled, WHEN an embedding vector is successfully generated, THE SimilarityService SHALL persist it in the BuildRecord's `embedding` column as a JSON-serialized array of floating-point numbers.
+3. WHERE similarity search is enabled, WHEN an embedding is persisted, THE SimilarityService SHALL query all prior BuildRecords with `status = "complete"` and non-null `embedding` values, compute the cosine similarity between the current embedding and each prior embedding using in-process calculation, and identify the single most similar record with similarity score above 0.85.
+4. WHERE similarity search is enabled, WHEN a similar BuildRecord is identified with similarity score > 0.85, THE SimilarityService SHALL populate the current BuildRecord's `similar_to` column with a JSON-serialized object containing `buildRecordId` and `similarityScore` fields referencing the most similar prior record.
+5. WHERE similarity search is enabled, WHEN the Dashboard displays a diagnosis detail view for a BuildRecord with a non-null `similar_to` field, THE Dashboard SHALL render a callout message of the form "This looks similar to a failure from {date} ({category}) — view it here" with a clickable link to the similar BuildRecord's detail page.
+6. THE SimilarityService SHALL complete embedding generation and similarity search within the existing 120-second diagnosis SLA; if the entire process (embedding + similarity query) is not completed within that window, the watchdog mechanism forces `status = "unavailable"` as specified in Requirement 3.5.
+7. IF the SimilarityService encounters an error during embedding generation (LLM API error, network timeout, invalid response format) or similarity calculation (database error, computation failure), THEN THE SimilarityService SHALL log the error, set `embedding` and `similar_to` to null, and allow the diagnosis to complete with `status = "complete"` without modifying `category`, `explanation`, `suggested_fix`, or `confidence` fields.
+8. THE SimilarityService SHALL NOT use external vector database services; all embedding storage SHALL use the existing SQLite `build_records` table and all similarity computations SHALL execute in-process within the Node.js Backend.
+
+---
+
+### Requirement 16: Stretch — Flaky Test Detection
+
+**User Story:** As a developer, I want to be notified when a test has failed multiple times across recent builds for the same repository, so that I can distinguish between new regressions and pre-existing flaky tests that fail intermittently.
+
+#### Acceptance Criteria
+
+1. WHERE flaky test detection is enabled, WHEN the Job_Queue processes a BuildRecord with `category = "test-failure"`, THE LLM_Client SHALL extend the system prompt to request an additional `failingTests` field containing an array of test name strings extracted from the cleaned log, and THE Backend SHALL persist this array in the BuildRecord's `failing_tests` column as a JSON-serialized string array.
+2. WHERE flaky test detection is enabled, WHEN a BuildRecord with `category = "test-failure"` and a non-empty `failing_tests` array transitions to `status = "complete"`, THE FlakinessTracker SHALL query the 10 most recent BuildRecords for the same `repo_name` with `category = "test-failure"` (including the current record), ordered by `created_at` descending.
+3. WHERE flaky test detection is enabled, WHEN the FlakinessTracker has retrieved the last 10 test-failure builds for the repository, THE FlakinessTracker SHALL, for each test name in the current BuildRecord's `failing_tests` array, count how many of those 10 builds contain that test name in their `failing_tests` arrays.
+4. WHERE flaky test detection is enabled, WHEN a test name appears in 3 or more of the last 10 test-failure builds for the same repository, THE FlakinessTracker SHALL mark that test as flaky and populate the BuildRecord's `flaky_tests` column with a JSON-serialized array of objects, each containing `testName` and `failureRate` fields (formatted as "{count}/10", e.g., "4/10").
+5. WHERE flaky test detection is enabled, WHEN the Dashboard displays a diagnosis detail view for a BuildRecord with a non-null `flaky_tests` field containing at least one entry, THE Dashboard SHALL render a warning callout for each flaky test of the form "Note: {testName} has failed intermittently in {failureRate} recent builds — likely flaky rather than a new regression".
+6. THE FlakinessTracker SHALL only analyze failures within the same `repo_name`; cross-repository analysis SHALL NOT be performed.
+7. THE FlakinessTracker SHALL use the index on `(repo_name, category, created_at)` to efficiently retrieve the 10 most recent test-failure builds without performing a full table scan.
+8. IF the FlakinessTracker encounters an error during the query, computation, or persistence of flaky test data (database error, missing `failing_tests` data in prior records, computation failure), THEN THE FlakinessTracker SHALL log the error, leave `flaky_tests` as null, and allow the diagnosis to complete with `status = "complete"` without modifying `category`, `explanation`, `suggested_fix`, or `confidence` fields.

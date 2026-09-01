@@ -119,12 +119,12 @@ function getClient(): OpenAI {
   if (!_client) {
     _client = new OpenAI({
       apiKey: process.env.LLM_API_KEY,
+      baseURL: process.env.LLM_BASE_URL, // undefined = OpenAI's default, set this for Groq
       timeout: 30_000, // 30-second timeout per Req 5.3
     });
   }
   return _client;
 }
-
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
