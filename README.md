@@ -1,205 +1,112 @@
 # CI/CD Failure Doctor
 
-An intelligent web application that automatically receives failed build logs from GitHub Actions or Jenkins, analyzes them using LLM technology, and presents developers with plain-English root-cause diagnoses and concrete suggested fixes.
+Automatically receives failed build logs from GitHub Actions or Jenkins, diagnoses the root cause using an LLM, and shows a plain-English explanation and suggested fix on a dashboard.
 
 ## Features
 
-- 🔍 **Automatic Log Analysis**: Webhook ingestion from GitHub Actions and Jenkins
-- 🤖 **LLM-Powered Diagnosis**: AI-driven root cause analysis with confidence levels
-- 📊 **Real-time Dashboard**: React-based UI showing recent diagnoses
-- 🎯 **Simulate Mode**: Demo the full workflow without live CI integration
-- 🔔 **Notifications** (Stretch): Slack and email alerts when diagnosis completes
-- 👍 **Feedback System** (Stretch): Rate diagnosis helpfulness
+- Webhook ingestion from GitHub Actions / Jenkins
+- LLM-powered diagnosis with category + confidence level
+- React dashboard with live polling
+- Simulate mode (6 bundled failure scenarios) — demo without a real CI connection
+- Stretch: Slack/email notifications, helpfulness feedback
 
-## Architecture
+## Stack
 
-- **Backend**: Node.js/Express with SQLite database
-- **Frontend**: React with Vite
-- **LLM Integration**: OpenAI-compatible API for log analysis
-- **Deployment**: Optimized for free-tier platforms (Render, Railway, Vercel)
+- **Backend**: Node.js/Express, SQLite, TypeScript
+- **Frontend**: React + Vite
+- **LLM**: Any OpenAI-compatible API (OpenAI, Groq, etc.)
 
 ---
 
-## Getting Started
+## Setup
 
-### Prerequisites
-
-- Node.js 20+ and npm
-- An LLM API key (OpenAI or compatible provider)
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd CICD-Failure-Doctor
-   ```
-
-2. **Install dependencies**
-   ```bash
-   # Install root dependencies
-   npm install
-   
-   # Install backend dependencies
-   cd backend
-   npm install
-   
-   # Install frontend dependencies
-   cd ../frontend
-   npm install
-   ```
-
-3. **Configure environment variables**
-   
-   Create a `.env` file in the `backend` directory (use `.env.example` as a template):
-   
-   ```env
-   # Required
-   WEBHOOK_SECRET=your-secret-key-here
-   LLM_API_KEY=sk-your-api-key-here
-   
-   # Optional
-   LLM_MODEL=gpt-4o-mini
-   DATABASE_PATH=./data/cicd-doctor.db
-   PORT=3000
-   
-   # Stretch features (optional)
-   SLACK_WEBHOOK_URL=
-   NOTIFICATION_EMAIL=
-   APP_BASE_URL=http://localhost:3000
-   ```
-
-4. **Build the application**
-   ```bash
-   # Build backend
-   cd backend
-   npm run build
-   
-   # Build frontend
-   cd ../frontend
-   npm run build
-   ```
-
-5. **Run the application**
-   ```bash
-   # Start backend (from backend directory)
-   npm start
-   
-   # In a separate terminal, serve frontend (from frontend directory)
-   npm run preview
-   ```
-
-The backend will be available at `http://localhost:3000` and the frontend at `http://localhost:4173`.
-
----
-
-## Development
-
-### Backend Development
+**Prerequisites**: Node.js 20+, an LLM API key (OpenAI or an OpenAI-compatible provider like Groq)
 
 ```bash
-cd backend
-npm run dev  # Start with hot-reload using tsx
-npm test     # Run tests
+git clone <repository-url>
+cd CICD-Failure-Doctor
+npm install
+cd backend && npm install
+cd ../frontend && npm install
 ```
 
-### Frontend Development
+Create `backend/.env`:
+
+```env
+# Required
+WEBHOOK_SECRET=your-secret-key-here
+LLM_API_KEY=your-llm-api-key-here
+
+# Required if using a non-OpenAI provider (e.g. Groq) — omit entirely to use OpenAI's default endpoint
+LLM_BASE_URL=https://api.groq.com/openai/v1
+
+# Must match a model your provider actually serves
+# OpenAI example: gpt-4o-mini
+# Groq example: openai/gpt-oss-120b
+LLM_MODEL=openai/gpt-oss-120b
+
+# Optional
+DATABASE_PATH=./data/cicd-doctor.db
+PORT=3000
+SLACK_WEBHOOK_URL=
+NOTIFICATION_EMAIL=
+APP_BASE_URL=http://localhost:3000
+```
+
+> **Note:** `.env` files use `#` for comments — make sure the lines you actually want active don't have a leading `#`.
+
+Build and run:
 
 ```bash
-cd frontend
-npm run dev  # Start Vite dev server (http://localhost:5173)
-npm test     # Run tests
+cd backend && npm run build && npm start
+cd ../frontend && npm run build && npm run preview
+```
+
+Backend: `http://localhost:3000` · Frontend: `http://localhost:4173`
+
+### Development mode (hot reload)
+
+```bash
+cd backend && npm run dev
+cd frontend && npm run dev   # http://localhost:5173
 ```
 
 ---
 
 ## Deployment
 
-### Deploy to Render (Backend)
+**Backend → Render or Railway**
+- Build command: `cd backend && npm install && npm run build`
+- Start command: `cd backend && npm start`
+- Set env vars: `WEBHOOK_SECRET`, `LLM_API_KEY`, `LLM_BASE_URL` (if applicable), `LLM_MODEL`, `DATABASE_PATH`, `NODE_VERSION=20`
 
-1. **Create a new Web Service** in the Render dashboard
-2. **Connect your repository**
-3. **Configure the service**:
-   - **Build Command**: `cd backend && npm install && npm run build`
-   - **Start Command**: `cd backend && npm start`
-   - **Environment Variables**:
-     - `WEBHOOK_SECRET`: Your webhook secret
-     - `LLM_API_KEY`: Your LLM API key
-     - `LLM_MODEL`: `gpt-4o-mini` (or your preferred model)
-     - `DATABASE_PATH`: `./data/cicd-doctor.db`
-     - `NODE_VERSION`: `20`
+**Frontend → Vercel**
+- Root directory: `frontend`
+- Framework preset: Vite
+- Env var: `VITE_API_URL` = your deployed backend URL
 
-4. **Deploy** and note your service URL
+After deploying, update the backend's CORS origin (`backend/src/server.ts`) to include your Vercel URL, and update `APP_BASE_URL` to your deployed backend URL.
 
-### Deploy to Railway (Backend)
-
-1. **Create a new project** from your GitHub repository
-2. **Configure environment variables** in the Railway dashboard:
-   - `WEBHOOK_SECRET`
-   - `LLM_API_KEY`
-   - `LLM_MODEL`
-   - `DATABASE_PATH`
-
-3. Railway will auto-detect the Node.js app and run:
-   ```bash
-   cd backend && npm install && npm run build && npm start
-   ```
-
-### Deploy to Vercel (Frontend)
-
-1. **Create a new project** in Vercel dashboard
-2. **Configure the project**:
-   - **Root Directory**: `frontend`
-   - **Framework Preset**: Vite
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `dist`
-   
-3. **Environment Variables**:
-   - `VITE_API_URL`: Your backend URL (e.g., `https://your-app.onrender.com`)
-
-4. **Deploy** and note your frontend URL
-
-5. **Update backend CORS**: Add your Vercel URL to the backend's CORS configuration in `src/server.ts`:
-   ```typescript
-   app.use(cors({
-     origin: [
-       'https://your-app.vercel.app',
-       'http://localhost:5173'
-     ]
-   }));
-   ```
-
-### Docker Deployment (Backend)
-
-A `Dockerfile` is provided in the `backend` directory for containerized deployment.
-
-**Build the image**:
+**Docker (backend)**
 ```bash
 cd backend
 docker build -t cicd-failure-doctor-backend .
-```
-
-**Run the container**:
-```bash
-docker run -d \
-  -p 3000:3000 \
+docker run -d -p 3000:3000 \
   -e WEBHOOK_SECRET=your-secret \
   -e LLM_API_KEY=your-api-key \
-  -e LLM_MODEL=gpt-4o-mini \
+  -e LLM_BASE_URL=https://api.groq.com/openai/v1 \
+  -e LLM_MODEL=openai/gpt-oss-120b \
   -v $(pwd)/data:/app/data \
   cicd-failure-doctor-backend
 ```
 
-**Deploy to any container platform** (Google Cloud Run, AWS ECS, Azure Container Instances, etc.) using the built image.
-
 ---
 
-## CI Integration
+## Connecting a real CI system
 
-### GitHub Actions
+Requires the backend to be publicly reachable (deployed, or tunneled via `ngrok http 3000` for local testing).
 
-Add this step to your workflow after your build/test steps:
-
+**GitHub Actions** — add repo secrets `CICD_DOCTOR_URL` and `CICD_DOCTOR_SECRET` (matching `WEBHOOK_SECRET`), then add to a workflow:
 ```yaml
 - name: Notify CI/CD Failure Doctor
   if: failure()
@@ -217,30 +124,20 @@ Add this step to your workflow after your build/test steps:
       }'
 ```
 
-**Required secrets**:
-- `CICD_DOCTOR_URL`: Your backend URL
-- `CICD_DOCTOR_SECRET`: Matches your backend's `WEBHOOK_SECRET`
-
-### Jenkins
-
-Add this to your Jenkinsfile in the `post` section:
-
+**Jenkins** — add to a declarative `Jenkinsfile`'s `post` block (requires the HTTP Request plugin):
 ```groovy
 post {
   failure {
     script {
       def log = currentBuild.rawBuild.getLog(300).join('\n')
       httpRequest(
-        httpMode:        'POST',
-        url:             "${env.CICD_DOCTOR_URL}/webhook/ingest",
-        contentType:     'APPLICATION_JSON',
-        customHeaders:   [[name: 'X-Webhook-Secret', value: env.CICD_DOCTOR_SECRET]],
-        requestBody:     groovy.json.JsonOutput.toJson([
-          log:       log,
-          repoName:  env.JOB_NAME,
-          jobName:   env.JOB_NAME,
-          commitSha: env.GIT_COMMIT,
-          source:    'jenkins'
+        httpMode:      'POST',
+        url:           "${env.CICD_DOCTOR_URL}/webhook/ingest",
+        contentType:   'APPLICATION_JSON',
+        customHeaders: [[name: 'X-Webhook-Secret', value: env.CICD_DOCTOR_SECRET]],
+        requestBody:   groovy.json.JsonOutput.toJson([
+          log: log, repoName: env.JOB_NAME, jobName: env.JOB_NAME,
+          commitSha: env.GIT_COMMIT, source: 'jenkins'
         ])
       )
     }
@@ -250,150 +147,36 @@ post {
 
 ---
 
-## API Endpoints
+## API Reference (short)
 
-### Webhook Ingestion
-
-**POST** `/webhook/ingest`
-
-Headers:
-- `X-Webhook-Secret`: Your shared secret
-- `Content-Type`: application/json
-
-Body:
-```json
-{
-  "log": "raw build log text...",
-  "repoName": "org/repo",
-  "jobName": "CI / build-and-test",
-  "commitSha": "40-char-hex",
-  "source": "github",
-  "branch": "main"
-}
-```
-
-Response: `202 Accepted`
-```json
-{
-  "id": "uuid",
-  "status": "pending"
-}
-```
-
-### Simulate Failed Build
-
-**POST** `/simulate`
-
-Body:
-```json
-{
-  "scenario": "test-failure"
-}
-```
-
-Supported scenarios:
-- `test-failure`
-- `dependency-error`
-- `docker-build-failure`
-- `env-var-missing`
-- `timeout`
-- `lint-error`
-
-Response: `202 Accepted`
-```json
-{
-  "id": "uuid",
-  "scenario": "test-failure",
-  "status": "pending"
-}
-```
-
-### List Diagnoses
-
-**GET** `/diagnoses?page=1&limit=20&category=test-failure`
-
-Response: `200 OK`
-```json
-{
-  "data": [
-    {
-      "id": "uuid",
-      "repoName": "org/repo",
-      "jobName": "CI / build",
-      "commitSha": "abc123...",
-      "source": "github",
-      "status": "complete",
-      "category": "test-failure",
-      "explanation": "Brief explanation...",
-      "confidence": "high",
-      "createdAt": "2024-01-15T10:23:45Z",
-      "completedAt": "2024-01-15T10:23:52Z"
-    }
-  ],
-  "total": 42,
-  "page": 1,
-  "pageSize": 20
-}
-```
-
-### Get Diagnosis Detail
-
-**GET** `/diagnoses/:id`
-
-Response: `200 OK`
-```json
-{
-  "id": "uuid",
-  "repoName": "org/repo",
-  "jobName": "CI / build",
-  "commitSha": "abc123...",
-  "source": "github",
-  "status": "complete",
-  "category": "test-failure",
-  "explanation": "Full multi-sentence explanation...",
-  "suggestedFix": "**Fix:** Update your test...\n```js\n// code\n```",
-  "confidence": "high",
-  "rawLog": "full raw log...",
-  "truncated": true,
-  "createdAt": "2024-01-15T10:23:45Z",
-  "completedAt": "2024-01-15T10:23:52Z"
-}
-```
+| Endpoint | Purpose |
+|---|---|
+| `POST /webhook/ingest` | Real CI failure ingestion (needs `X-Webhook-Secret` header) |
+| `POST /simulate` | Demo mode — `{ "scenario": "test-failure" \| "dependency-error" \| "docker-build-failure" \| "env-var-missing" \| "timeout" \| "lint-error" }` |
+| `GET /diagnoses?page=&limit=&category=` | Paginated list |
+| `GET /diagnoses/:id` | Full detail incl. raw log and suggested fix |
+| `GET /health` | Health check (for uptime pings on free-tier hosts) |
 
 ---
 
 ## Testing
 
-### Backend Tests
-
 ```bash
-cd backend
-npm test              # Run all tests
-npm test -- --watch   # Watch mode
-```
-
-Test coverage includes:
-- Unit tests for log processing, LLM client, webhook validation
-- Property-based tests with fast-check
-- Integration tests with supertest
-
-### Frontend Tests
-
-```bash
-cd frontend
-npm test              # Run all tests
-npm test -- --watch   # Watch mode
+cd backend && npm test
+cd frontend && npm test
 ```
 
 ---
 
-## Security Considerations
+## Troubleshooting
 
-- **Webhook Secret**: Use a strong random string and keep it secure
-- **Rate Limiting**: Configured by default on `/webhook/ingest` and `/simulate`
-- **CORS**: Configure allowed origins in `backend/src/server.ts`
-- **Log Content**: Raw logs may contain secrets; consider scrubbing in production
-- **Environment Variables**: Never commit `.env` files to version control
+| Symptom | Fix |
+|---|---|
+| `Missing required environment variable` on start | Set `WEBHOOK_SECRET` and `LLM_API_KEY` in `backend/.env`, restart the server (env changes need a restart) |
+| Diagnoses stuck `unavailable` / model 404 error | `LLM_MODEL` doesn't match your provider — Groq needs `LLM_BASE_URL=https://api.groq.com/openai/v1` and a Groq model name (e.g. `openai/gpt-oss-120b`), not `gpt-4o-mini` |
+| `.env` values not taking effect | Check for a leading `#` (comments the line out) and confirm you restarted after editing |
+| `Failed to fetch diagnoses: Too Many Requests` | Rate limiter is applied too broadly — it should only cover `/webhook/ingest` and `/simulate`, not `/diagnoses` polling |
+| First request after idle takes 30+ seconds | Free-tier host cold start — ping `/health` periodically via UptimeRobot or cron-job.org |
 
 ---
 
@@ -403,64 +186,18 @@ npm test -- --watch   # Watch mode
 CICD-Failure-Doctor/
 ├── backend/
 │   ├── src/
-│   │   ├── auth/          # Webhook authentication
-│   │   ├── db/            # Database initialization and records
-│   │   ├── routes/        # Express route handlers
-│   │   ├── services/      # Business logic (ingest, notifications)
-│   │   ├── jobQueue.ts    # Async job processing
-│   │   ├── llmClient.ts   # LLM API integration
-│   │   ├── logProcessor.ts # Log cleaning and truncation
-│   │   ├── server.ts      # Express app entry point
-│   │   └── types.ts       # TypeScript type definitions
-│   ├── tests/             # Backend tests
-│   ├── fixtures/          # Sample logs for simulate mode
-│   ├── data/              # SQLite database (gitignored)
-│   ├── Dockerfile         # Docker configuration
-│   └── package.json
+│   │   ├── auth/            # Webhook authentication
+│   │   ├── db/               # Database init and records
+│   │   ├── routes/           # Express route handlers
+│   │   ├── services/         # Ingest, notifications
+│   │   ├── jobQueue.ts       # Async job processing
+│   │   ├── llmClient.ts      # LLM integration
+│   │   ├── logProcessor.ts   # Log cleaning/truncation
+│   │   └── server.ts
+│   ├── tests/
+│   ├── fixtures/             # Sample logs for simulate mode
+│   └── Dockerfile
 ├── frontend/
-│   ├── src/               # React application
-│   ├── public/            # Static assets
-│   └── package.json
+│   └── src/
 └── README.md
 ```
-
----
-
-## Troubleshooting
-
-### Backend won't start
-
-**Error**: `Missing required environment variable`
-- **Solution**: Ensure `WEBHOOK_SECRET` and `LLM_API_KEY` are set in your `.env` file
-
-### LLM diagnosis fails
-
-**Error**: BuildRecords stuck in `pending` status
-- **Solution**: Check `LLM_API_KEY` is valid and your LLM provider is reachable
-- **Solution**: Verify `LLM_MODEL` matches your provider's available models
-
-### Database locked errors
-
-**Error**: `SQLITE_BUSY` or `database is locked`
-- **Solution**: Ensure only one backend instance is running
-- **Solution**: Check that `DATABASE_PATH` points to a writable directory
-
-### Cold starts on free tier
-
-**Issue**: First request takes 30+ seconds
-- **Solution**: Set up a health check ping (UptimeRobot, cron-job.org) to keep the service warm
-- **Solution**: Use the provided `/health` endpoint for monitoring
-
----
-
-## License
-
-[Your License Here]
-
-## Contributing
-
-[Your Contributing Guidelines Here]
-
-## Support
-
-For issues and questions, please open a GitHub issue or contact [your contact info].
