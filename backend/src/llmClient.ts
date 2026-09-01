@@ -9,7 +9,7 @@
  * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7
  */
 
-import OpenAI, { APIConnectionTimeoutError, APIError } from "openai";
+import OpenAI from "openai";
 import { z } from "zod";
 import type { DiagnosisInput, DiagnosisResult } from "./types.js";
 
@@ -157,17 +157,18 @@ export async function diagnoseBuild(
 
     raw = response.choices[0]?.message?.content ?? "";
   } catch (err) {
-    // APIConnectionTimeoutError covers both connect-timeout and read-timeout
-    if (err instanceof APIConnectionTimeoutError) {
+    // Check for timeout errors
+    if (err && typeof err === "object" && "name" in err && err.name === "APIConnectionTimeoutError") {
       throw new NetworkError(
         `LLM API request timed out after 30 seconds`,
         err,
       );
     }
-    // APIError covers HTTP-level errors (4xx, 5xx) and connection failures
-    if (err instanceof APIError) {
+    // Check for API errors (4xx, 5xx)
+    if (err && typeof err === "object" && "status" in err) {
+      const apiErr = err as { status?: number; message: string };
       throw new NetworkError(
-        `LLM API error: ${err.status ?? "unknown"} — ${err.message}`,
+        `LLM API error: ${apiErr.status ?? "unknown"} — ${apiErr.message}`,
         err,
       );
     }
