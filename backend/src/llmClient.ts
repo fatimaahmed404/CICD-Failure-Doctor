@@ -13,6 +13,8 @@ import OpenAI from "openai";
 import { z } from "zod";
 import type { DiagnosisInput, DiagnosisResult } from "./types.js";
 
+type OpenAIClient = InstanceType<typeof OpenAI>;
+
 // ── Typed errors ──────────────────────────────────────────────────────────────
 
 /**
@@ -113,9 +115,9 @@ ${input.cleanedLog}
 
 // ── OpenAI client (lazy singleton) ───────────────────────────────────────────
 
-let _client: OpenAI | null = null;
+let _client: OpenAIClient | null = null;
 
-function getClient(): OpenAI {
+function getClient(): OpenAIClient {
   if (!_client) {
     _client = new OpenAI({
       apiKey: process.env.LLM_API_KEY,
