@@ -802,6 +802,132 @@
         "chatSessionId": "sess_167072f0-ff11-46b2-af80-a6790d16cfe7",
         "timestamp": 1788181981436
       }
+    ],
+    "20.1 Add `github_tokens` table DDL and data-access functions": [
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441095048
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441110047
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441131544
+      }
+    ],
+    "20.2 Implement token encryption utilities": [
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441096278
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441115014
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441137493
+      }
+    ],
+    "20.3 Implement `GitHubConnectionService`": [
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441097082
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441150434
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441162238
+      }
+    ],
+    "20.4 Implement GitHub OAuth routes": [
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441097905
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441167407
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441217882
+      }
+    ],
+    "20.5 Wire GitHub routes into `server.ts`": [
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441098864
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441224840
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788442311327
+      }
+    ],
+    "20.6 Implement frontend GitHub OAuth UI": [
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441099737
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441225859
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788442316621
+      }
+    ],
+    "20.7 Write unit tests for GitHub OAuth service": [
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788441100539
+      },
+      {
+        "executionId": "2bafdc66-b3e8-42bf-856e-3ac9f40179d4",
+        "chatSessionId": "sess_ef7d7dd6-7636-474d-8ef3-1294ce0a0492",
+        "timestamp": 1788442321751
+      },
+      {
+        "executionId": "405cb7f9-374a-4d15-ac03-d5eeba20fc6c",
+        "chatSessionId": "sess_cbb30d0d-fd3d-4832-b232-9335be6c4358",
+        "timestamp": 1788500408193
+      }
+    ],
+    "20. GitHub OAuth Connection (stretch)": [
+      {
+        "executionId": "405cb7f9-374a-4d15-ac03-d5eeba20fc6c",
+        "chatSessionId": "sess_cbb30d0d-fd3d-4832-b232-9335be6c4358",
+        "timestamp": 1788500409301
+      }
     ]
   }
 }

@@ -50,7 +50,7 @@ db.exec(`
     ON build_records(category);
 `);
 
-// Create the feedback table (stretch feature)
+// Create the feedback table (stretch feature — Req 13)
 db.exec(`
   CREATE TABLE IF NOT EXISTS feedback (
     id              TEXT PRIMARY KEY,
@@ -66,6 +66,20 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_feedback_category
     ON feedback(build_record_id);
+`);
+
+// Create github_tokens table (stretch feature — Req 17.18)
+// Stores AES-256-GCM encrypted OAuth access tokens per anonymous client.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS github_tokens (
+    client_id       TEXT PRIMARY KEY,
+    encrypted_token TEXT NOT NULL,
+    github_username TEXT,
+    created_at      TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_github_tokens_created
+    ON github_tokens(created_at DESC);
 `);
 
 export { db };

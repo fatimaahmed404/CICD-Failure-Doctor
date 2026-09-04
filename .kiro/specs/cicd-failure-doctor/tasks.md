@@ -325,6 +325,68 @@ Full-stack TypeScript web application: Node.js/Express backend with SQLite persi
 
 ---
 
+- [x] 20. GitHub OAuth Connection (stretch)
+  - [x] 20.1 Add `github_tokens` table DDL and data-access functions
+    - Add `CREATE TABLE IF NOT EXISTS github_tokens` DDL to `backend/src/db/init.ts` per design document schema: `client_id TEXT PRIMARY KEY`, `encrypted_token TEXT NOT NULL`, `github_username TEXT`, `created_at TEXT NOT NULL`
+    - Add index `idx_github_tokens_created ON github_tokens(created_at DESC)`
+    - Create `backend/src/db/githubTokens.ts` with typed functions: `upsertGitHubToken(clientId, encryptedToken, githubUsername?)`, `getGitHubToken(clientId)`, `deleteGitHubToken(clientId)`
+    - _Requirements: 17.18_
+
+  - [x] 20.2 Implement token encryption utilities
+    - Create `backend/src/auth/tokenEncryption.ts` exporting `encryptToken(plaintext: string): string` and `decryptToken(ciphertext: string): string`
+    - Use AES-256-GCM via Node's built-in `crypto` module; derive the 32-byte key from `TOKEN_ENCRYPTION_KEY` env var using `crypto.scrypt` with a fixed salt
+    - If `TOKEN_ENCRYPTION_KEY` is not set at startup: generate a random 32-byte key, log a warning `[startup] TOKEN_ENCRYPTION_KEY not set — tokens will not persist across restarts`, store in-memory only
+    - Ciphertext format: `<hex-iv>:<hex-authTag>:<hex-ciphertext>` (all fields hex-encoded, colon-separated)
+    - _Requirements: 17.5, 17.17_
+
+  - [x] 20.3 Implement `GitHubConnectionService`
+    - Create `backend/src/services/githubConnection.ts`
+    - `isOAuthEnabled(): boolean` — returns true if both `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set and non-empty
+    - `getLoginUrl(state: string): string` — constructs GitHub OAuth authorize URL with `client_id`, `scope=repo`, `redirect_uri` (from `GITHUB_REDIRECT_URI` env var, default `{APP_BASE_URL}/auth/github/callback`), and `state`
+    - `exchangeCode(code: string, redirectUri: string): Promise<string>` — POSTs to `https://github.com/login/oauth/access_token` with `client_id`, `client_secret`, `code`, `redirect_uri`; parses and returns the `access_token`
+    - `fetchGitHubUsername(accessToken: string): Promise<string | null>` — GETs `https://api.github.com/user` with `Authorization: Bearer {token}`; returns `login` field; catches and logs errors, returns null
+    - `listRepos(accessToken: string): Promise<GitHubRepo[]>` — GETs `https://api.github.com/user/repos?affiliation=owner,collaborator&sort=updated&per_page=100`; filters for `permissions.push = true`; returns array with `name`, `full_name`, `default_branch`, `html_url`
+    - `connectRepo(accessToken: string, repoFullName: string): Promise<ConnectRepoResult>` — fetches repo public key, encrypts `WEBHOOK_SECRET` and `APP_BASE_URL` using `libsodium-wrappers` sealed box, creates/updates both secrets, creates/updates workflow file; returns `{ success: true, repoFullName, workflowUrl }` on full success or `{ secretsCreated: true, workflowCreated: false, error, manualSetupUrl }` on partial success (207 case)
+    - Handle GitHub API 401 → throw `GitHubAuthError`; 403 with rate-limit header → throw `GitHubRateLimitError` with reset timestamp; 403 without rate-limit → throw `GitHubPermissionError`
+    - _Requirements: 17.3, 17.6, 17.8, 17.9, 17.10, 17.15, 17.16_
+
+  - [x] 20.4 Implement GitHub OAuth routes
+    - Create `backend/src/routes/github.ts` with all GitHub OAuth routes, guarded by `isOAuthEnabled()`
+    - `GET /config`: return `{ features: { githubOAuth: isOAuthEnabled() } }`
+    - `GET /auth/github/login`: generate a cryptographically random `state` parameter (16 hex bytes), store in `req.session.oauthState`, redirect to `getLoginUrl(state)` with HTTP 302; requires `express-session` middleware
+    - `GET /auth/github/callback`: validate `req.query.state === req.session.oauthState` (return 400 with `{ error: "Invalid OAuth state parameter" }` if mismatch); call `exchangeCode`; encrypt token; call `fetchGitHubUsername`; call `upsertGitHubToken`; return `{ success: true, username }` and redirect to the frontend dashboard
+    - `GET /github/repos`: validate `X-Client-Id` header present (400 if absent); retrieve and decrypt token for `clientId`; call `listRepos`; on `GitHubAuthError` return 401; return `{ repos: [...] }`
+    - `POST /github/connect-repo`: validate `X-Client-Id` and `repoFullName` fields; retrieve and decrypt token; call `connectRepo`; on full success return 200; on partial success return 207; on `GitHubAuthError` return 401; on `GitHubPermissionError` return 403; on `GitHubRateLimitError` return 429 with reset timestamp
+    - `DELETE /github/disconnect`: validate `X-Client-Id`; call `deleteGitHubToken`; return `{ success: true }`
+    - Only register these routes when `isOAuthEnabled()` is true; if disabled, `GET /config` still returns `{ features: { githubOAuth: false } }` but all other routes are not registered
+    - Install `express-session` and `libsodium-wrappers` packages in `backend/package.json`
+    - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 17.8, 17.9, 17.10, 17.15, 17.20_
+
+  - [x] 20.5 Wire GitHub routes into `server.ts`
+    - Import and mount the `GET /config` route unconditionally
+    - Import `githubRouter` from `routes/github.ts`; mount it when `isOAuthEnabled()` returns true
+    - Add `express-session` middleware before route registration (use `SESSION_SECRET` env var, default to a random value at startup with a warning)
+    - Update `.env.example` to include `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_REDIRECT_URI`, `TOKEN_ENCRYPTION_KEY`, `SESSION_SECRET`
+    - _Requirements: 17.1, 17.2_
+
+  - [x] 20.6 Implement frontend GitHub OAuth UI
+    - In `frontend/src/api.ts`, add typed fetch helpers: `fetchAppConfig()`, `fetchGitHubRepos(clientId)`, `connectGitHubRepo(clientId, repoFullName)`, `disconnectGitHub(clientId)`
+    - In `frontend/src/App.tsx`, call `fetchAppConfig()` on mount; if `features.githubOAuth = true`, render a "Connect GitHub" button in the header
+    - Create `frontend/src/components/GitHubConnect.tsx`:
+      - "Connect GitHub" button: on click, navigate to `/auth/github/login`
+      - After OAuth callback (detect `?connected=true` query param set by the backend redirect), show repository picker: call `fetchGitHubRepos`, display each repo's `full_name`, `default_branch`, and a "Connect this repo" button
+      - On "Connect this repo" click: call `connectGitHubRepo`; on 200 show success message with a link to the created workflow file; on 207 show partial-success message with manual setup link; on error show the error message
+      - Display connected username in header if available (store in component state after callback); show "Disconnect" button that calls `disconnectGitHub` and resets state
+    - _Requirements: 17.11, 17.12, 17.13, 17.20_
+
+  - [x] 20.7 Write unit tests for GitHub OAuth service
+    - Test `tokenEncryption.ts`: encrypt then decrypt round-trip produces original plaintext; different plaintexts produce different ciphertexts; invalid ciphertext format throws
+    - Test `GitHubConnectionService`: `isOAuthEnabled` returns false when env vars absent; `getLoginUrl` returns correctly structured URL with all params; `connectRepo` partial success (workflow file fails) returns the correct 207-structured object; GitHub API 401 throws `GitHubAuthError`; GitHub API 403 with rate-limit header throws `GitHubRateLimitError` with correct reset timestamp
+    - Test `GET /config` route: returns `{ features: { githubOAuth: false } }` when env vars unset
+    - _Requirements: 17.1, 17.2, 17.5, 17.7, 17.15_
+
+---
+
 ## Notes
 
 - Tasks marked with `*` are optional and can be skipped for a faster MVP
@@ -361,7 +423,12 @@ Full-stack TypeScript web application: Node.js/Express backend with SQLite persi
     { "id": 17, "tasks": ["18.1"] },
     { "id": 18, "tasks": ["18.2", "19.1"] },
     { "id": 19, "tasks": ["19.2"] },
-    { "id": 20, "tasks": ["19.3"] }
+    { "id": 20, "tasks": ["19.3"] },
+    { "id": 21, "tasks": ["20.1", "20.2"] },
+    { "id": 22, "tasks": ["20.3"] },
+    { "id": 23, "tasks": ["20.4"] },
+    { "id": 24, "tasks": ["20.5", "20.6"] },
+    { "id": 25, "tasks": ["20.7"] }
   ]
 }
 ```

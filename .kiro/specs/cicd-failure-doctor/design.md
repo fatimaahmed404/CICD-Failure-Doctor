@@ -35,6 +35,11 @@ graph TD
         AUTOFIX[AutoFixService - stretch]
         SIMSERV[SimilarityService - stretch]
         FLAKY[FlakinessTracker - stretch]
+    GHCONN[GET /auth/github/login - stretch]
+    GHCB[GET /auth/github/callback - stretch]
+    GHREPOS[GET /github/repos - stretch]
+    GHCONNREPO[POST /github/connect-repo - stretch]
+    CFG[GET /config - stretch]
     end
 
     subgraph External["External - stretch"]
@@ -84,6 +89,15 @@ graph TD
     QUEUE -->|on complete, parallel - stretch| FLAKY
     FLAKY -->|Query recent builds - stretch| DB
     FLAKY -->|Update flaky_tests - stretch| DB
+
+    %% stretch edges - github oauth
+    UI -->|GET /config - stretch| CFG
+    UI -->|Connect GitHub - stretch| GHCONN
+    GHCONN -->|302 redirect - stretch| GHAPI
+    GHCB -->|Exchange code + store token - stretch| DB
+    GHREPOS -->|Decrypt token + list repos - stretch| GHAPI
+    GHCONNREPO -->|Create secrets + workflow - stretch| GHAPI
+    GHCONNREPO -->|Read/write token - stretch| DB
 ```
 
 ---
@@ -166,6 +180,52 @@ sequenceDiagram
     API->>DB: SELECT by id
     DB-->>API: full record
     API-->>U: 200 DiagnosisDetail
+```
+
+### GitHub OAuth Connection Flow (stretch)
+
+```mermaid
+sequenceDiagram
+    participant U as User (Browser)
+    participant API as Express API
+    participant DB as SQLite
+    participant GH as GitHub OAuth
+    participant GHAPI as GitHub API
+
+    U->>API: GET /config
+    API-->>U: { features: { githubOAuth: true } }
+    U->>API: GET /auth/github/login
+    API->>API: Generate state parameter
+    API-->>U: 302 Redirect to GitHub OAuth
+    U->>GH: Authorize app (scope=repo)
+    GH-->>U: Redirect to /auth/github/callback?code=...&state=...
+    U->>API: GET /auth/github/callback?code=...&state=...
+    API->>API: Validate state
+    API->>GH: POST /oauth/access_token (exchange code)
+    GH-->>API: { access_token }
+    API->>API: Encrypt token
+    API->>DB: INSERT github_tokens (client_id, encrypted_token)
+    API->>GHAPI: GET /user (fetch username)
+    GHAPI-->>API: { login: "username" }
+    API->>DB: UPDATE github_tokens SET github_username
+    API-->>U: 200 { success: true, username }
+    U->>API: GET /github/repos (Header: X-Client-Id)
+    API->>DB: SELECT encrypted_token WHERE client_id
+    API->>API: Decrypt token
+    API->>GHAPI: GET /user/repos (Bearer token)
+    GHAPI-->>API: [{ name, full_name, default_branch, ... }]
+    API-->>U: { repos: [...] }
+    U->>API: POST /github/connect-repo { repoFullName } (Header: X-Client-Id)
+    API->>DB: SELECT encrypted_token
+    API->>API: Decrypt token
+    API->>GHAPI: GET /repos/{owner}/{repo}/actions/secrets/public-key
+    GHAPI-->>API: { key, key_id }
+    API->>API: Encrypt WEBHOOK_SECRET with public key
+    API->>GHAPI: PUT /repos/{owner}/{repo}/actions/secrets/CICD_DOCTOR_SECRET
+    API->>GHAPI: PUT /repos/{owner}/{repo}/actions/secrets/CICD_DOCTOR_URL
+    API->>GHAPI: PUT /repos/{owner}/{repo}/contents/.github/workflows/cicd-failure-doctor.yml
+    GHAPI-->>API: { content: { html_url } }
+    API-->>U: 200 { success: true, workflowUrl }
 ```
 
 ---
@@ -581,6 +641,80 @@ interface FlakyTest {
 
 ---
 
+### Component 13: GitHubConnectionService (stretch)
+
+> **OPTIONAL STRETCH FEATURE**: This is a significantly larger addition than prior stretch features. It provides a convenience layer on top of the existing manual webhook setup — the manual method (documented in CI Trigger Snippets) remains the primary, always-available integration path. If `GITHUB_CLIENT_ID` or `GITHUB_CLIENT_SECRET` environment variables are unset, this entire feature is hidden and has zero impact on existing functionality.
+
+**Purpose**: Enables users to connect their GitHub account via OAuth and automatically configure a selected repository with the required webhook secret and workflow file, eliminating the need for manual secret and workflow file creation in GitHub's UI.
+
+**Interface**:
+```typescript
+// GET /config
+interface AppConfigResponse {
+  features: {
+    githubOAuth: boolean;  // true if GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are set
+  };
+}
+
+// GET /auth/github/login
+// Redirects to GitHub OAuth authorize URL with 302
+
+// GET /auth/github/callback?code=...&state=...
+interface GitHubCallbackResponse {
+  success: boolean;
+  username: string | null;  // GitHub username if available
+}
+
+// GET /github/repos
+// Header: X-Client-Id: <uuid>
+interface GitHubRepo {
+  name: string;             // e.g., "my-repo"
+  full_name: string;        // e.g., "owner/my-repo"
+  default_branch: string;   // e.g., "main"
+  html_url: string;         // GitHub web URL
+}
+
+interface GitHubReposResponse {
+  repos: GitHubRepo[];
+}
+
+// POST /github/connect-repo
+// Header: X-Client-Id: <uuid>
+interface ConnectRepoRequest {
+  repoFullName: string;  // e.g., "owner/my-repo"
+}
+
+interface ConnectRepoResponse {
+  success: boolean;
+  repoFullName: string;
+  workflowUrl: string;   // GitHub web URL to the created workflow file
+}
+
+// DELETE /github/disconnect
+// Header: X-Client-Id: <uuid>
+interface DisconnectResponse {
+  success: boolean;
+}
+```
+
+**Responsibilities**:
+- `GET /config`: return `{ features: { githubOAuth: true } }` if both `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are set and non-empty; otherwise return `{ features: { githubOAuth: false } }` (Req 17.1, 17.2)
+- `GET /auth/github/login`: generate a random `state` parameter, store it in the user's session (using `express-session` or equivalent), construct the GitHub OAuth authorization URL `https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&scope=repo&redirect_uri={GITHUB_REDIRECT_URI}&state={state}`, and redirect with HTTP 302 (Req 17.3)
+- `GET /auth/github/callback`: validate `state` parameter matches the stored session value (return HTTP 400 if mismatch); exchange the `code` for an access token by POST to `https://github.com/login/oauth/access_token` with `client_id`, `client_secret`, `code`, and `redirect_uri`; parse the access token from the response; encrypt the token using AES-256-GCM with a key derived from `TOKEN_ENCRYPTION_KEY` via `crypto.scrypt`; persist the encrypted token in the `github_tokens` table keyed by the `X-Client-Id` header value; call `GET https://api.github.com/user` to retrieve the GitHub username and store it in the `github_username` column (best-effort; if this fails, leave username null); return HTTP 200 with `{ success: true, username }` and redirect the user to the dashboard (Req 17.4, 17.5, 17.19)
+- `GET /github/repos`: retrieve the encrypted token for the `X-Client-Id` from the `github_tokens` table; decrypt it; call `GET https://api.github.com/user/repos?affiliation=owner,collaborator&sort=updated&per_page=100` with `Authorization: Bearer {token}`; parse the response and filter for repositories where the user has push access (check `permissions.push = true`); return `{ repos: [...] }` with `name`, `full_name`, `default_branch`, `html_url` for each (Req 17.6)
+- `POST /github/connect-repo`: retrieve and decrypt the OAuth token for the `X-Client-Id`; parse `repoFullName` into `owner` and `repo` components; call `GET https://api.github.com/repos/{owner}/{repo}/actions/secrets/public-key` to fetch the repository's public key; encrypt `WEBHOOK_SECRET` using `libsodium-wrappers` sealed box encryption with the fetched public key; create/update the repository secret `CICD_DOCTOR_SECRET` via `PUT https://api.github.com/repos/{owner}/{repo}/actions/secrets/CICD_DOCTOR_SECRET` with the encrypted value; create/update the repository secret `CICD_DOCTOR_URL` via `PUT https://api.github.com/repos/{owner}/{repo}/actions/secrets/CICD_DOCTOR_URL` with `APP_BASE_URL`; construct a workflow file content (same as documented in CI Trigger Snippets, adapted to reference the two secrets); call `PUT https://api.github.com/repos/{owner}/{repo}/contents/.github/workflows/cicd-failure-doctor.yml` with the workflow content and a commit message `"Add CI/CD Failure Doctor workflow"`; return HTTP 200 with `{ success: true, repoFullName, workflowUrl }` (Req 17.8)
+- If secret creation succeeds but workflow file creation fails: return HTTP 207 (Multi-Status) with a response indicating which step failed and a link to manual setup instructions (Req 17.9)
+- If secret creation fails: return HTTP 400 or HTTP 403 with a clear error message; do not proceed to workflow file creation (Req 17.10)
+- If GitHub API returns HTTP 401/403 for a token-authenticated request: return HTTP 401 to the client with a message indicating the token is invalid and the user must reconnect (Req 17.7)
+- If GitHub API returns HTTP 403 with `X-RateLimit-Remaining: 0`: return HTTP 429 with the `X-RateLimit-Reset` timestamp from the GitHub response (Req 17.15)
+- `DELETE /github/disconnect`: delete the `github_tokens` record for the `X-Client-Id`; return `{ success: true }` (Req 17.20)
+- If `TOKEN_ENCRYPTION_KEY` is not set at startup: generate a random 32-byte key, log a warning that tokens will not persist across restarts, and use the in-memory key (Req 17.17)
+- Dashboard: on load, call `GET /config`; if `githubOAuth: true`, render the "Connect GitHub" button; on button click, navigate to `/auth/github/login`; after OAuth callback, fetch and display repos from `GET /github/repos`; on "Connect this repo" button click, call `POST /github/connect-repo` and display a confirmation with the workflow file link; render the GitHub username and a "Disconnect" button if connected (Req 17.11, 17.12, 17.13, 17.20)
+- Never use the GitHub App installation model — this feature uses standard OAuth App with user access tokens only (Req 17.16)
+- Never modify or delete any existing file, secret, or workflow in the target repository other than `CICD_DOCTOR_SECRET`, `CICD_DOCTOR_URL`, and `.github/workflows/cicd-failure-doctor.yml` (Req 17.14)
+
+---
+
 ## Data Models
 
 ### BuildRecord
@@ -714,6 +848,40 @@ CREATE INDEX idx_feedback_category     ON feedback(build_record_id);  -- used by
 - `buildRecordId` must reference an existing row in `build_records`
 - `rating` must be exactly `"helpful"` or `"unhelpful"`
 - The `UNIQUE(build_record_id, client_id)` constraint enforces one-rating-per-client-per-diagnosis; upsert (INSERT OR REPLACE) replaces any prior rating
+
+---
+
+### GitHubTokenRecord (stretch)
+
+> **Stretch Feature**: Only present when the GitHub OAuth connection feature is enabled (Requirement 17).
+
+```typescript
+interface GitHubTokenRecord {
+  clientId: string;           // anonymous UUID from localStorage (same as feedback feature)
+  encryptedToken: string;     // AES-256-GCM encrypted GitHub OAuth access token
+  githubUsername: string | null;  // GitHub username for display purposes
+  createdAt: Date;
+}
+```
+
+**SQLite DDL**:
+```sql
+CREATE TABLE github_tokens (
+  client_id        TEXT PRIMARY KEY,
+  encrypted_token  TEXT NOT NULL,
+  github_username  TEXT,
+  created_at       TEXT NOT NULL
+);
+
+CREATE INDEX idx_github_tokens_created ON github_tokens(created_at DESC);
+```
+
+**Validation Rules**:
+- `client_id` must be a valid UUID v4 (same format as used in helpfulness feedback)
+- `encrypted_token` stores the GitHub OAuth access token encrypted using AES-256-GCM with a key derived from `TOKEN_ENCRYPTION_KEY` via `crypto.scrypt` with salt
+- `github_username` is populated best-effort by calling `GET /user` after token exchange; if the call fails, remains null (does not block the OAuth flow)
+- The `client_id` PRIMARY KEY enforces one token per client; re-authenticating replaces the existing token
+- Tokens are decrypted only when needed for GitHub API calls and never logged or returned to the frontend in plaintext
 
 ---
 
@@ -1322,6 +1490,111 @@ END PROCEDURE
 
 ---
 
+### GitHub OAuth Connect-Repo Algorithm (stretch)
+
+```pascal
+PROCEDURE connectRepo(clientId, repoFullName)
+  INPUT: clientId string, repoFullName string (e.g., "owner/repo")
+  OUTPUT: ConnectRepoResponse or error
+
+  SEQUENCE
+    // Retrieve and decrypt stored token
+    tokenRecord ← db.query(
+      "SELECT encrypted_token FROM github_tokens WHERE client_id = ?",
+      [clientId]
+    )
+    IF tokenRecord IS NULL THEN
+      RAISE AuthError("No GitHub token found for this client. Please reconnect.")
+    END IF
+    accessToken ← decrypt(tokenRecord.encrypted_token, env.TOKEN_ENCRYPTION_KEY)
+
+    // Parse owner/repo
+    parts ← repoFullName.split("/")
+    IF length(parts) ≠ 2 THEN
+      RAISE ValidationError("repoFullName must be in 'owner/repo' format")
+    END IF
+    owner ← parts[0]
+    repo  ← parts[1]
+
+    // Fetch repository public key for secret encryption
+    pubKeyResponse ← githubAPI.GET(
+      "/repos/{owner}/{repo}/actions/secrets/public-key",
+      Authorization: "Bearer " + accessToken
+    )
+    IF pubKeyResponse.status = 401 THEN
+      RAISE AuthError("GitHub token invalid or expired. Please reconnect.")
+    END IF
+    IF pubKeyResponse.status = 403 AND pubKeyResponse.headers["X-RateLimit-Remaining"] = "0" THEN
+      RAISE RateLimitError("GitHub API rate limit exceeded", pubKeyResponse.headers["X-RateLimit-Reset"])
+    END IF
+    IF pubKeyResponse.status = 403 THEN
+      RAISE PermissionError("You do not have write access to " + repoFullName)
+    END IF
+    publicKey ← pubKeyResponse.body.key
+    keyId     ← pubKeyResponse.body.key_id
+
+    // Encrypt WEBHOOK_SECRET using libsodium sealed box
+    encryptedWebhookSecret ← sodiumSealedBox(env.WEBHOOK_SECRET, publicKey)
+    encryptedAppUrl        ← sodiumSealedBox(env.APP_BASE_URL, publicKey)
+
+    // Create repository secrets (step 1)
+    secretsOk ← false
+    TRY
+      githubAPI.PUT("/repos/{owner}/{repo}/actions/secrets/CICD_DOCTOR_SECRET",
+        { encrypted_value: encryptedWebhookSecret, key_id: keyId },
+        Authorization: "Bearer " + accessToken
+      )
+      githubAPI.PUT("/repos/{owner}/{repo}/actions/secrets/CICD_DOCTOR_URL",
+        { encrypted_value: encryptedAppUrl, key_id: keyId },
+        Authorization: "Bearer " + accessToken
+      )
+      secretsOk ← true
+    CATCH err
+      RAISE SecretCreationError("Failed to create repository secrets: " + err.message)
+    END TRY
+
+    // Create workflow file (step 2) — secrets already created; partial failure reported as 207
+    workflowContent ← buildWorkflowYaml()  // generates cicd-failure-doctor.yml referencing secrets
+    workflowPath    ← ".github/workflows/cicd-failure-doctor.yml"
+    TRY
+      response ← githubAPI.PUT(
+        "/repos/{owner}/{repo}/contents/" + workflowPath,
+        {
+          message: "Add CI/CD Failure Doctor workflow",
+          content: base64(workflowContent)
+        },
+        Authorization: "Bearer " + accessToken
+      )
+      workflowUrl ← response.body.content.html_url
+      RETURN { success: true, repoFullName: repoFullName, workflowUrl: workflowUrl }
+    CATCH err
+      // Secrets were created; report partial success rather than total failure
+      LOG WARN "Workflow file creation failed after secrets were created: " + err.message
+      RETURN_STATUS 207 {
+        secretsCreated: true,
+        workflowCreated: false,
+        error: "Secrets were created but the workflow file could not be added: " + err.message,
+        manualSetupUrl: env.APP_BASE_URL + "/docs/manual-setup"
+      }
+    END TRY
+  END SEQUENCE
+END PROCEDURE
+```
+
+**Preconditions**:
+- `clientId` maps to a valid encrypted token in `github_tokens`
+- `repoFullName` is a non-empty string in `owner/repo` format
+- `WEBHOOK_SECRET` and `APP_BASE_URL` environment variables are set
+
+**Postconditions**:
+- On full success: exactly two named secrets and one named workflow file exist in the target repo; no other repo content is modified
+- On partial success (HTTP 207): exactly two named secrets exist; no workflow file was written; the caller is informed and directed to manual setup
+- On any error before secrets are created: no changes are made to the target repo
+
+**Invariant**: For any execution path, the number of files modified in the target repo is ∈ {0, 2 secrets only, 2 secrets + 1 workflow file} — never any other combination
+
+---
+
 ### Webhook Authentication Algorithm
 
 ```pascal
@@ -1627,6 +1900,24 @@ For all BuildRecords processed by FlakinessTracker, the presence or absence of n
 
 ---
 
+### Property 16: GitHub OAuth Non-Interference (stretch)
+For all requests received when `GITHUB_CLIENT_ID` or `GITHUB_CLIENT_SECRET` is unset or empty, the system SHALL NOT register any `/auth/github/*`, `/github/*`, or `/config` routes that expose OAuth functionality. The set of active routes, database tables queried, and response shapes of all pre-existing endpoints (`/webhook/ingest`, `/simulate`, `/diagnoses`, `/diagnoses/:id`, `/diagnoses/:id/feedback`, `/feedback/stats`) SHALL be identical to the pre-Requirement-17 behavior.
+**Validates: Requirements 17.2**
+
+---
+
+### Property 17: OAuth Token Confidentiality (stretch)
+For all invocations of the GitHubConnectionService, the raw GitHub OAuth access token SHALL NOT appear in: any HTTP response body or header, any server log line, or any database column other than `github_tokens.encrypted_token` (which stores it AES-256-GCM encrypted). The only decrypted use of the token is as the value of the `Authorization: Bearer` header in outbound GitHub API calls made server-side.
+**Validates: Requirements 17.5**
+
+---
+
+### Property 18: Connect-Repo Scope Restriction (stretch)
+For any successful invocation of `POST /github/connect-repo` for a given `owner/repo`, the set of GitHub API write operations performed SHALL be exactly: one PUT to `secrets/CICD_DOCTOR_SECRET`, one PUT to `secrets/CICD_DOCTOR_URL`, and one PUT to `contents/.github/workflows/cicd-failure-doctor.yml`. No other files, secrets, branches, or repository settings SHALL be created, modified, or deleted in the target repository as a result of this call.
+**Validates: Requirements 17.14**
+
+---
+
 ## Error Handling
 
 ### Scenario 1: Invalid Webhook Secret
@@ -1746,6 +2037,41 @@ For all BuildRecords processed by FlakinessTracker, the presence or absence of n
 **Condition**: LLM response for a test-failure diagnosis is valid JSON with required fields (`category`, `explanation`, `suggestedFix`, `confidence`) but omits optional stretch fields (`autoFixable`, `autoFixFile`, `failingTests`)
 **Response**: Job processor validates required fields successfully, proceeds to `status = "complete"`, skips auto-fix and flakiness processing for fields that are absent
 **Recovery**: Diagnosis completes normally with all primary data; stretch features are silently disabled for that record; no error logged (expected behavior when stretch data unavailable)
+
+---
+
+### Scenario 16: GitHub OAuth State Mismatch (stretch)
+**Condition**: A GET request arrives at `/auth/github/callback` where the `state` query parameter does not match the value stored in the user's session (e.g., CSRF attempt or stale browser tab)
+**Response**: Backend returns HTTP 400 with body `{ "error": "Invalid OAuth state parameter" }`; no token exchange is attempted; no record is written to `github_tokens`
+**Recovery**: User is shown an error and prompted to restart the flow by clicking "Connect GitHub" again; the CSRF guard functioned correctly
+
+---
+
+### Scenario 17: GitHub OAuth Token Expired or Revoked (stretch)
+**Condition**: A stored OAuth token has been revoked by the user in GitHub (Settings → Applications → Authorized OAuth Apps) and a subsequent call to `/github/repos` or `/github/connect-repo` receives HTTP 401 from the GitHub API
+**Response**: Backend returns HTTP 401 to the client with body `{ "error": "GitHub token invalid or expired. Please reconnect your account." }`; raw token value is not included in the response or server logs
+**Recovery**: Dashboard detects the 401 and returns the user to the pre-connection state, showing the "Connect GitHub" button; the stale `github_tokens` record is replaced when the user reconnects
+
+---
+
+### Scenario 18: Secret Creation Succeeds but Workflow File Creation Fails (stretch)
+**Condition**: During `POST /github/connect-repo`, both repository secrets (`CICD_DOCTOR_SECRET`, `CICD_DOCTOR_URL`) are created successfully but the workflow file PUT to the GitHub Contents API fails (e.g., temporary API error or insufficient branch-protection permissions on `.github/workflows/`)
+**Response**: Backend returns HTTP 207 (Multi-Status) with a response body indicating which steps succeeded and which failed, plus a direct link to the manual setup instructions in design.md's CI Trigger Snippets section; the two created secrets are NOT rolled back
+**Recovery**: User can follow the manual instructions to add the workflow file, reusing the secrets already in place; no existing workflows, secrets, or files in the repo are modified
+
+---
+
+### Scenario 19: GitHub API Rate Limit Hit (stretch)
+**Condition**: Any GitHub API call during `/github/repos` or `/github/connect-repo` receives HTTP 403 with header `X-RateLimit-Remaining: 0`
+**Response**: Backend returns HTTP 429 to the client with body `{ "error": "GitHub API rate limit exceeded", "resetAt": "<UTC timestamp from X-RateLimit-Reset header>" }`; no partial state is left in an ambiguous condition
+**Recovery**: Dashboard displays the rate-limit message and reset time; user can retry after the limit resets; no diagnosis records or existing repo configuration are affected
+
+---
+
+### Scenario 20: Connect-Repo Without Push Access (stretch)
+**Condition**: `POST /github/connect-repo` is called for a repository where `permissions.push` is `false` in the GitHub API response (user is a read-only collaborator or has no write rights)
+**Response**: Backend returns HTTP 403 with body `{ "error": "You do not have write access to owner/repo. Push access is required to create secrets and workflow files." }`; no secret creation or file write is attempted
+**Recovery**: Dashboard displays the error message and prompts the user to select a repository where they have push access; no files or secrets in the target repo are modified
 
 ---
 
@@ -1943,6 +2269,12 @@ APP_BASE_URL=http://localhost:3000  # Base URL used to construct diagnosis detai
 # ── Stretch: Auto-Fix Pull Requests (optional) ────────────────────────────────
 GITHUB_TOKEN=                    # GitHub personal access token with 'repo' scope; required for auto-fix PR creation
 GITHUB_REPO=                     # Target repository in 'owner/repo' format (e.g., 'acme/payments-service')
+
+# ── Stretch: GitHub OAuth Connection (optional) ───────────────────────────────────────────
+GITHUB_CLIENT_ID=                # GitHub OAuth App Client ID; if unset, the "Connect GitHub" button is hidden and all OAuth routes are disabled
+GITHUB_CLIENT_SECRET=            # GitHub OAuth App Client Secret; if unset, the "Connect GitHub" button is hidden and all OAuth routes are disabled
+GITHUB_REDIRECT_URI=             # OAuth callback URL (default: {APP_BASE_URL}/auth/github/callback); must match the callback URL registered in your GitHub OAuth App settings
+TOKEN_ENCRYPTION_KEY=            # 32-byte hex string used to encrypt stored GitHub OAuth access tokens; if unset, a random key is generated on startup (tokens will not persist across restarts)
 
 # ── Stretch: CORS ─────────────────────────────────────────────────────────────
 # Configure the allowed frontend origin in your Express cors() config:

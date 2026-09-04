@@ -271,3 +271,61 @@ CI/CD Failure Doctor is a web application that automatically receives failed bui
 6. THE FlakinessTracker SHALL only analyze failures within the same `repo_name`; cross-repository analysis SHALL NOT be performed.
 7. THE FlakinessTracker SHALL use the index on `(repo_name, category, created_at)` to efficiently retrieve the 10 most recent test-failure builds without performing a full table scan.
 8. IF the FlakinessTracker encounters an error during the query, computation, or persistence of flaky test data (database error, missing `failing_tests` data in prior records, computation failure), THEN THE FlakinessTracker SHALL log the error, leave `flaky_tests` as null, and allow the diagnosis to complete with `status = "complete"` without modifying `category`, `explanation`, `suggested_fix`, or `confidence` fields.
+
+
+---
+
+### Requirement 17: Stretch — GitHub Account Connection (OAuth)
+
+> **OPTIONAL STRETCH FEATURE**: This requirement describes a convenience layer built on top of the existing manual webhook setup. The manual webhook configuration path (documented in design.md's CI Trigger Snippets section) remains the primary, always-available integration method. This OAuth flow is entirely additive — if the required environment variables are not set, none of the OAuth-related features are exposed, and the application behaves exactly as it does today with zero functional impact.
+
+**User Story:** As a developer, I want to connect my GitHub account via OAuth and have the system automatically configure a selected repository with the required webhook secret and workflow file, so that I can complete the CI integration with a few clicks instead of manually creating secrets and workflow files in GitHub's UI.
+
+#### Acceptance Criteria
+
+1. WHEN the Backend starts with both `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` environment variables set to non-empty values, THE Backend SHALL enable GitHub OAuth routes (`/auth/github/login`, `/auth/github/callback`, `/github/repos`, `/github/connect-repo`) and THE `GET /config` endpoint SHALL return `{ features: { githubOAuth: true } }`.
+
+2. WHEN the Backend starts with either `GITHUB_CLIENT_ID` or `GITHUB_CLIENT_SECRET` unset or empty, THE Backend SHALL NOT register any GitHub OAuth routes, THE `GET /config` endpoint SHALL return `{ features: { githubOAuth: false } }`, and THE Dashboard SHALL NOT render the "Connect GitHub" button, leaving all existing functionality completely unaffected.
+
+3. WHEN a GET request is received at `/auth/github/login`, THE Backend SHALL construct a GitHub OAuth authorization URL with `client_id` set to `GITHUB_CLIENT_ID`, `scope` set to `"repo"` (required for reading repos and writing secrets/files), `redirect_uri` set to `GITHUB_REDIRECT_URI` (defaults to `{APP_BASE_URL}/auth/github/callback`), and a randomly generated `state` parameter stored in the user's session, and THE Backend SHALL redirect the user to that URL with HTTP 302.
+
+4. WHEN a GET request is received at `/auth/github/callback` with `code` and `state` query parameters, THE Backend SHALL validate that the `state` parameter matches the value stored in the user's session (returning HTTP 400 if it does not match), exchange the `code` for an access token by POST to `https://github.com/oauth/access_token` with `client_id`, `client_secret`, `code`, and `redirect_uri`, and store the returned access token in the database associated with the anonymous client ID from the `X-Client-Id` request header (reusing the same UUID pattern from the Helpfulness Feedback feature).
+
+5. WHEN an access token is persisted to the database, THE Backend SHALL encrypt it at rest using AES-256-GCM with a key derived from the `TOKEN_ENCRYPTION_KEY` environment variable via Node's built-in `crypto` module, and THE Backend SHALL NEVER log the raw token or return it to the frontend in any API response.
+
+6. WHEN a GET request is received at `/github/repos` with a valid `X-Client-Id` header, THE Backend SHALL retrieve the encrypted OAuth token associated with that client ID, decrypt it, call `GET https://api.github.com/user/repos?affiliation=owner,collaborator&sort=updated&per_page=100` with `Authorization: Bearer {token}`, and return a JSON array containing `name`, `full_name`, `default_branch`, and `html_url` for each repository where the user has push access.
+
+7. WHEN the GitHub API returns HTTP 401 (invalid/expired token) or HTTP 403 (insufficient permissions) in response to a request authenticated with a stored OAuth token, THE Backend SHALL return HTTP 401 to the client with a clear error message indicating the GitHub token is no longer valid and the user must reconnect their account.
+
+8. WHEN a POST request is received at `/github/connect-repo` with a `repoFullName` field (e.g., `"owner/repo"`) and a valid `X-Client-Id` header, THE Backend SHALL:
+   - Retrieve and decrypt the OAuth token for that client ID
+   - Fetch the repository's public key via `GET https://api.github.com/repos/{owner}/{repo}/actions/secrets/public-key`
+   - Encrypt the `WEBHOOK_SECRET` environment variable value using libsodium sealed box encryption (via `libsodium-wrappers` package) with the repository's public key
+   - Create or update a repository secret named `CICD_DOCTOR_SECRET` via `PUT https://api.github.com/repos/{owner}/{repo}/actions/secrets/CICD_DOCTOR_SECRET` with the encrypted secret value
+   - Create or update a repository secret named `CICD_DOCTOR_URL` via `PUT https://api.github.com/repos/{owner}/{repo}/actions/secrets/CICD_DOCTOR_URL` with the `APP_BASE_URL` environment variable value
+   - Create or update a workflow file at `.github/workflows/cicd-failure-doctor.yml` via `PUT https://api.github.com/repos/{owner}/{repo}/contents/.github/workflows/cicd-failure-doctor.yml` with the same webhook-notify step documented in design.md's CI Trigger Snippets section, adapted to reference `${{ secrets.CICD_DOCTOR_SECRET }}` and `${{ secrets.CICD_DOCTOR_URL }}`
+   - Return HTTP 200 with a JSON response containing `{ success: true, repoFullName, workflowUrl }` where `workflowUrl` is the GitHub web URL to the created workflow file
+
+9. WHEN the `/github/connect-repo` handler successfully creates/updates both repository secrets but encounters an error during workflow file creation (network error, API error, rate limit, insufficient permissions), THE Backend SHALL return HTTP 207 (Multi-Status) with a response body indicating that secrets were created successfully but the workflow file step failed, including a link to the manual setup instructions as a fallback, and THE Backend SHALL NOT delete or roll back the created secrets.
+
+10. WHEN the `/github/connect-repo` handler encounters an error during secret creation (network error, API error, rate limit, insufficient permissions, user lacks push access to the repository), THE Backend SHALL return HTTP 400 or HTTP 403 (as appropriate) with a clear error message describing the failure, and THE Backend SHALL NOT proceed to workflow file creation.
+
+11. WHEN the Dashboard loads and `GET /config` returns `{ features: { githubOAuth: true } }`, THE Dashboard SHALL render a "Connect GitHub" button; WHEN that button is clicked, THE Dashboard SHALL navigate the user to `/auth/github/login`.
+
+12. WHEN the Dashboard receives a successful callback from GitHub OAuth (detected by the presence of `?code=` and `?state=` query parameters in the URL after redirect), THE Dashboard SHALL call `GET /auth/github/callback` with those parameters to complete the token exchange, and on success, display a repository picker UI that loads the user's repositories from `GET /github/repos`.
+
+13. WHEN the Dashboard renders the repository picker, THE Dashboard SHALL display each repository's `full_name`, `default_branch`, and a "Connect this repo" button; WHEN that button is clicked, THE Dashboard SHALL call `POST /github/connect-repo` with the selected `repoFullName`, and on success, display a confirmation message with a clickable link to the created workflow file URL returned in the response.
+
+14. THE Backend SHALL ensure that the `/github/connect-repo` endpoint NEVER modifies or deletes any existing file in the target repository except for the two named repository secrets (`CICD_DOCTOR_SECRET`, `CICD_DOCTOR_URL`) and the one named workflow file (`.github/workflows/cicd-failure-doctor.yml`); all other files, secrets, and workflows SHALL remain untouched.
+
+15. WHEN the GitHub API responds with HTTP 403 and `X-RateLimit-Remaining: 0` to any request from the Backend, THE Backend SHALL return HTTP 429 to the client with a clear error message indicating the GitHub API rate limit has been reached and including the `X-RateLimit-Reset` timestamp from the GitHub response.
+
+16. THE GitHubConnectionService SHALL NOT use the GitHub App installation flow (which requires a GitHub App manifest, installation events, and installation access tokens); instead, THE GitHubConnectionService SHALL use the standard OAuth App model with a user access token obtained via the OAuth 2.0 authorization code flow as described in acceptance criteria 3 and 4.
+
+17. IF `TOKEN_ENCRYPTION_KEY` is not set or is empty at runtime, THE Backend SHALL generate a random 32-byte encryption key on startup, log a warning that tokens will not persist across restarts, and store the generated key in memory only (not on disk).
+
+18. THE Backend SHALL store OAuth token associations in a `github_tokens` table with columns `client_id` (TEXT PRIMARY KEY), `encrypted_token` (TEXT NOT NULL), `github_username` (TEXT), `created_at` (INTEGER NOT NULL), indexed on `client_id`.
+
+19. WHEN an OAuth token is successfully stored, THE Backend SHALL call `GET https://api.github.com/user` to retrieve the authenticated user's GitHub username and store it in the `github_username` column for display purposes (this call is best-effort; if it fails, `github_username` remains null and the feature continues to work).
+
+20. THE Dashboard SHALL display the connected GitHub username (if available) in the repository picker header, with a "Disconnect" button that clears the stored token and returns the user to the pre-connection state (the disconnect flow is a DELETE request to a `/github/disconnect` endpoint that deletes the token record for the current `X-Client-Id`).

@@ -1,30 +1,45 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DiagnosisSummary, SimulationScenario } from '../types';
+import GitHubConnect from './GitHubConnect';
 
-// API base URL - defaults to localhost:3000 for development
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
-const POLL_INTERVAL_MS = 3000; // 3 seconds
+const POLL_INTERVAL_MS = 3000;
 
 const SIMULATION_SCENARIOS: SimulationScenario[] = [
-  "test-failure",
-  "dependency-error",
-  "docker-build-failure",
-  "env-var-missing",
-  "timeout",
-  "lint-error",
+  'test-failure',
+  'dependency-error',
+  'docker-build-failure',
+  'env-var-missing',
+  'timeout',
+  'lint-error',
 ];
 
-const DiagnosisList: React.FC = () => {
+interface DiagnosisListProps {
+  /** Whether the GitHub OAuth integration is available. Req 17.2, 17.11 */
+  githubOAuthEnabled?: boolean;
+  /** Anonymous client ID (also used as GitHub OAuth identity). Req 17.4 */
+  githubClientId?: string | null;
+  /** GitHub username if connected, null otherwise. Req 17.20 */
+  githubUsername?: string | null;
+  /** Called when the user disconnects their GitHub account. Req 17.20 */
+  onGithubDisconnect?: () => void;
+}
+
+const DiagnosisList: React.FC<DiagnosisListProps> = ({
+  githubOAuthEnabled = false,
+  githubClientId = null,
+  githubUsername = null,
+  onGithubDisconnect = () => {},
+}) => {
   const navigate = useNavigate();
   const [diagnoses, setDiagnoses] = useState<DiagnosisSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedScenario, setSelectedScenario] = useState<SimulationScenario>("test-failure");
+  const [selectedScenario, setSelectedScenario] = useState<SimulationScenario>('test-failure');
   const [simulateLoading, setSimulateLoading] = useState(false);
 
-  // Fetch diagnoses from API
   const fetchDiagnoses = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/diagnoses`);
@@ -33,51 +48,33 @@ const DiagnosisList: React.FC = () => {
       }
       const data = await response.json();
       setDiagnoses(data.data);
-      setError(null); // Clear error on successful fetch
+      setError(null);
       setLoading(false);
     } catch (err) {
-      // On poll failure: retain current list and show non-blocking error (Req 8.10)
       console.error('Poll error:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch diagnoses');
       setLoading(false);
     }
   }, []);
 
-  // Initial fetch
   useEffect(() => {
     fetchDiagnoses();
   }, [fetchDiagnoses]);
 
-  // Polling every 3 seconds (Req 8.1)
   useEffect(() => {
-    const intervalId = setInterval(() => {
-      fetchDiagnoses();
-    }, POLL_INTERVAL_MS);
-
+    const intervalId = setInterval(fetchDiagnoses, POLL_INTERVAL_MS);
     return () => clearInterval(intervalId);
   }, [fetchDiagnoses]);
 
-  // Handle simulate failed build
   const handleSimulate = async () => {
     setSimulateLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/simulate`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scenario: selectedScenario }),
       });
-
-      if (!response.ok) {
-        throw new Error(`Simulation failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      console.log('Simulation created:', result);
-      
-      // The new pending row will appear within one polling cycle (Req 8.8)
-      // Trigger immediate fetch to reduce perceived delay
+      if (!response.ok) throw new Error(`Simulation failed: ${response.statusText}`);
       await fetchDiagnoses();
     } catch (err) {
       console.error('Simulate error:', err);
@@ -87,31 +84,19 @@ const DiagnosisList: React.FC = () => {
     }
   };
 
-  // Navigate to detail view on row click
-  const handleRowClick = (id: string) => {
-    navigate(`/diagnoses/${id}`);
-  };
+  const handleRowClick = (id: string) => navigate(`/diagnoses/${id}`);
 
-  // Render status badge
   const renderStatusBadge = (status: DiagnosisSummary['status']) => {
     const colors = {
       pending: 'bg-yellow-500',
       complete: 'bg-green-500',
       unavailable: 'bg-red-500',
     };
-    return (
-      <span className={`status-badge ${colors[status]}`}>
-        {status}
-      </span>
-    );
+    return <span className={`status-badge ${colors[status]}`}>{status}</span>;
   };
 
-  // Render category badge with color coding
   const renderCategoryBadge = (category: DiagnosisSummary['category']) => {
-    if (!category) {
-      return <span className="category-badge bg-gray-400">Uncategorized</span>;
-    }
-
+    if (!category) return <span className="category-badge bg-gray-400">Uncategorized</span>;
     const categoryColors: Record<string, string> = {
       'dependency-build-error': 'bg-purple-500',
       'test-failure': 'bg-red-500',
@@ -119,9 +104,8 @@ const DiagnosisList: React.FC = () => {
       'env-var-secrets': 'bg-orange-500',
       'timeout-infrastructure': 'bg-yellow-600',
       'syntax-lint-error': 'bg-pink-500',
-      'unknown': 'bg-gray-500',
+      unknown: 'bg-gray-500',
     };
-
     return (
       <span className={`category-badge ${categoryColors[category] || 'bg-gray-500'}`}>
         {category}
@@ -129,14 +113,8 @@ const DiagnosisList: React.FC = () => {
     );
   };
 
-  // Truncate commit SHA to first 7 characters
   const truncateSha = (sha: string) => sha.substring(0, 7);
-
-  // Format date for display
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleString();
-  };
+  const formatDate = (dateStr: string) => new Date(dateStr).toLocaleString();
 
   return (
     <div className="container">
@@ -144,6 +122,15 @@ const DiagnosisList: React.FC = () => {
         <h1>CI/CD Failure Doctor</h1>
         <p className="subtitle">Automated AI-powered build failure diagnosis</p>
       </header>
+
+      {/* GitHub Connect — only shown when feature flag is on (Req 17.11) */}
+      {githubOAuthEnabled && (
+        <GitHubConnect
+          clientId={githubClientId}
+          username={githubUsername}
+          onDisconnect={onGithubDisconnect}
+        />
+      )}
 
       {/* Simulate Failed Build Section */}
       <div className="simulate-section">
@@ -172,11 +159,7 @@ const DiagnosisList: React.FC = () => {
       </div>
 
       {/* Error banner (non-blocking) */}
-      {error && (
-        <div className="error-banner">
-          ⚠️ {error}
-        </div>
-      )}
+      {error && <div className="error-banner">⚠️ {error}</div>}
 
       {/* Diagnoses List */}
       <div className="diagnoses-section">

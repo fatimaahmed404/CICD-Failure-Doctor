@@ -7,6 +7,39 @@
  *
  * Requirements: 11.2, 11.4
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -30,7 +63,7 @@ const feedback_js_1 = require("./routes/feedback.js");
 const CORS_ORIGINS = process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
     : ["http://localhost:5173",
-        "https://cicd-failure-doctor-1.onrender.com"];
+        "https://cicd-failure-doctor-frontend.vercel.app"];
 // ---- Rate limiter (task 11.2) ------------------------------------------------
 // Applied only to POST /webhook/ingest and POST /simulate.
 // 20 requests per minute per IP; exceeding the limit returns 429.
@@ -61,6 +94,31 @@ app.use("/diagnoses", diagnoses_js_1.diagnosesRouter);
 app.use("/feedback", feedback_js_1.feedbackRouter);
 // Also mount feedback POST route under /diagnoses/:id/feedback
 app.use("/diagnoses", feedback_js_1.feedbackRouter);
+// ---- Config endpoint (Req 17.1, 17.2) ----------------------------------------
+// Returns feature flags so the frontend can show/hide optional features.
+app.get("/config", (_req, res) => {
+    const githubOAuth = !!process.env.GITHUB_CLIENT_ID?.trim() &&
+        !!process.env.GITHUB_CLIENT_SECRET?.trim();
+    res.status(200).json({
+        features: {
+            githubOAuth,
+        },
+    });
+});
+// ---- GitHub OAuth routes (conditionally registered) -------------------------
+// Only mount if both GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are configured.
+// Requirements: 17.1, 17.2
+const githubOAuthEnabled = !!process.env.GITHUB_CLIENT_ID?.trim() &&
+    !!process.env.GITHUB_CLIENT_SECRET?.trim();
+if (githubOAuthEnabled) {
+    // Dynamic import so the module (and libsodium) only loads when needed
+    Promise.resolve().then(() => __importStar(require("./routes/github.js"))).then(({ githubRouter }) => {
+        app.use(githubRouter);
+        console.log("[server] GitHub OAuth routes registered");
+    }).catch((err) => {
+        console.error("[server] Failed to load GitHub OAuth routes:", err);
+    });
+}
 // Health endpoint — used by uptime monitors to prevent free-tier cold starts
 // Requirements: 11.4
 app.get("/health", (_req, res) => {
@@ -84,5 +142,8 @@ app.use((err, _req, res, _next) => {
 // ---- Start server ------------------------------------------------------------
 app.listen(PORT, () => {
     console.log(`[server] Listening on port ${PORT}`);
+    if (githubOAuthEnabled) {
+        console.log("[server] GitHub OAuth is ENABLED");
+    }
 });
 //# sourceMappingURL=server.js.map
