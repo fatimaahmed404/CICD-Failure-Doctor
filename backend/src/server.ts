@@ -15,13 +15,17 @@ validateEnvironment();
 // ---- Dependencies ------------------------------------------------------------
 import express from "express";
 import cors from "cors";
+import { randomBytes } from "crypto";
 // Initialize the SQLite database and run schema migrations at startup
 import "./db/init.js";
 import { rateLimit } from "express-rate-limit";
+import session from "express-session";
 import { diagnosesRouter } from "./routes/diagnoses.js";
 import webhookRouter from "./routes/webhook.js";
 import simulateRouter from "./routes/simulate.js";
 import { feedbackRouter } from "./routes/feedback.js";
+import { githubRouter } from "./routes/github.js";
+import { isOAuthEnabled } from "./services/githubConnection.js";
 
 // ---- CORS configuration ------------------------------------------------------
 const CORS_ORIGINS = process.env.CORS_ORIGIN
@@ -47,6 +51,34 @@ const app = express();
 // CORS must be applied before all routes
 app.use(cors({ origin: CORS_ORIGINS }));
 
+// ── Session middleware (required for OAuth state parameter) ───────────────────
+// SESSION_SECRET should be set in production. If absent, a random secret is
+// generated so the server still starts, but sessions won't persist across restarts.
+const sessionSecret = (() => {
+  if (process.env.SESSION_SECRET && process.env.SESSION_SECRET.trim() !== "") {
+    return process.env.SESSION_SECRET.trim();
+  }
+  const fallback = randomBytes(32).toString("hex");
+  console.warn(
+    "[startup] SESSION_SECRET not set — sessions will not persist across restarts",
+  );
+  return fallback;
+})();
+
+app.use(
+  session({
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 10 * 60 * 1000, // 10 minutes — long enough to complete OAuth flow
+    },
+  }),
+);
+
 app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -67,6 +99,19 @@ app.use("/feedback", feedbackRouter);
 
 // Also mount feedback POST route under /diagnoses/:id/feedback
 app.use("/diagnoses", feedbackRouter);
+
+// ── GitHub OAuth routes (includes /config, /auth/github/*, /github/*) ─────────
+// githubRouter always exposes GET /config.
+// All OAuth-specific routes (/auth/github/login, /auth/github/callback,
+// /github/repos, /github/connect-repo, /github/disconnect) are self-gated
+// inside the router by isOAuthEnabled() — they are only registered when both
+// GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are set.
+// Requirements: 17.1, 17.2
+app.use(githubRouter);
+
+if (isOAuthEnabled()) {
+  console.log("[server] GitHub OAuth routes registered");
+}
 
 // Health endpoint — used by uptime monitors to prevent free-tier cold starts
 // Requirements: 11.4
@@ -102,6 +147,9 @@ app.use(
 // ---- Start server ------------------------------------------------------------
 app.listen(PORT, () => {
   console.log(`[server] Listening on port ${PORT}`);
+  if (isOAuthEnabled()) {
+    console.log("[server] GitHub OAuth is ENABLED");
+  }
 });
 
 export { app };
