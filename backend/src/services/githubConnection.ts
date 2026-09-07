@@ -411,7 +411,8 @@ export async function connectRepo(
   const workflowContent = buildWorkflowYaml();
   const workflowBase64 = Buffer.from(workflowContent, "utf8").toString("base64");
 
-  const manualSetupUrl = `${appBaseUrl}/docs/manual-setup`;
+  const frontendUrl = process.env.FRONTEND_URL?.trim() || appBaseUrl;
+  const manualSetupUrl = `${frontendUrl}/#manual-setup`;
 
   try {
     // Check for an existing file to get its SHA (required for updates).
@@ -486,9 +487,8 @@ export async function connectRepo(
  */
 function buildWorkflowYaml(): string {
   return `# CI/CD Failure Doctor — auto-generated workflow
-# Sends failed build logs to your CI/CD Failure Doctor instance for AI analysis.
-# Do not edit the secret names — they were configured automatically via the
-# "Connect GitHub" flow in the CI/CD Failure Doctor dashboard.
+# Sends failed build logs to CI/CD Failure Doctor for AI analysis.
+# Secrets CICD_DOCTOR_SECRET and CICD_DOCTOR_URL were added automatically.
 name: Notify CI/CD Failure Doctor on Failure
 
 on:
@@ -500,20 +500,27 @@ jobs:
   notify-failure-doctor:
     if: \${{ github.event.workflow_run.conclusion == 'failure' }}
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
     steps:
-      - name: Send failure notification to CI/CD Failure Doctor
-        if: failure()
+      - name: Send failure notification
+        env:
+          GH_TOKEN: \${{ github.token }}
+          CICD_DOCTOR_URL: \${{ secrets.CICD_DOCTOR_URL }}
+          CICD_DOCTOR_SECRET: \${{ secrets.CICD_DOCTOR_SECRET }}
         run: |
-          curl -s -X POST "\${{ secrets.CICD_DOCTOR_URL }}/webhook/ingest" \\
+          LOG=$(gh run view \${{ github.event.workflow_run.id }} --log-failed \\
+                  --repo \${{ github.repository }} 2>/dev/null | tail -c 15000 || echo "Log unavailable")
+          PAYLOAD=$(jq -n \\
+            --arg log     "$LOG" \\
+            --arg repo    "\${{ github.repository }}" \\
+            --arg job     "\${{ github.event.workflow_run.name }}" \\
+            --arg sha     "\${{ github.event.workflow_run.head_sha }}" \\
+            --arg branch  "\${{ github.event.workflow_run.head_branch }}" \\
+            '{log: $log, repoName: $repo, jobName: $job, commitSha: $sha, source: "github", branch: $branch}')
+          curl -sf -X POST "$CICD_DOCTOR_URL/webhook/ingest" \\
             -H "Content-Type: application/json" \\
-            -H "X-Webhook-Secret: \${{ secrets.CICD_DOCTOR_SECRET }}" \\
-            -d '{
-              "log":       "'"$(cat build.log | tail -300 2>/dev/null || echo 'Log unavailable')"'",
-              "repoName":  "\${{ github.repository }}",
-              "jobName":   "\${{ github.event.workflow_run.name }}",
-              "commitSha": "\${{ github.event.workflow_run.head_sha }}",
-              "source":    "github",
-              "branch":    "\${{ github.event.workflow_run.head_branch }}"
-            }'
+            -H "X-Webhook-Secret: $CICD_DOCTOR_SECRET" \\
+            -d "$PAYLOAD" || echo "Warning: delivery failed (non-fatal)"
 `;
 }
