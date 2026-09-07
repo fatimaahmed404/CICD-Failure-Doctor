@@ -9,4 +9,6 @@
  */
 declare const router: import("express-serve-static-core").Router;
 export { router as diagnosesRouter };
+declare const publicRouter: import("express-serve-static-core").Router;
+export { publicRouter as publicDiagnosesRouter };
 //# sourceMappingURL=diagnoses.d.ts.map

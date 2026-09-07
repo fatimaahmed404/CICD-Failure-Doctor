@@ -1,1 +1,1 @@
-{"version":3,"file":"diagnoses.d.ts","sourceRoot":"","sources":["../../src/routes/diagnoses.ts"],"names":[],"mappings":"AAAA;;;;;;;;GAQG;AAeH,QAAA,MAAM,MAAM,4CAAW,CAAC;AAsHxB,OAAO,EAAE,MAAM,IAAI,eAAe,EAAE,CAAC"}
+{"version":3,"file":"diagnoses.d.ts","sourceRoot":"","sources":["../../src/routes/diagnoses.ts"],"names":[],"mappings":"AAAA;;;;;;;;GAQG;AAgBH,QAAA,MAAM,MAAM,4CAAW,CAAC;AAuJxB,OAAO,EAAE,MAAM,IAAI,eAAe,EAAE,CAAC;AAIrC,QAAA,MAAM,YAAY,4CAAW,CAAC;AAqC9B,OAAO,EAAE,YAAY,IAAI,qBAAqB,EAAE,CAAC"}

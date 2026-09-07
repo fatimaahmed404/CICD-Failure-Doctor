@@ -90,7 +90,7 @@ router.post(
 
     // ── Ingest (validates remaining fields, persists record, enqueues job) ──
     try {
-      const record = await ingestBuild(body as unknown as Parameters<typeof ingestBuild>[0], source);
+      const record = await ingestBuild(body as unknown as Parameters<typeof ingestBuild>[0], source, authResult.userId);
       res.status(202).json({ id: record.id, status: "pending" });
     } catch (err) {
       if (err instanceof IngestValidationError) {

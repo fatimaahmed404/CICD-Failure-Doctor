@@ -47,7 +47,7 @@ function isPresent(value) {
  *
  * Requirements: 1.1, 1.3, 1.4, 10.2, 10.3, 10.4
  */
-async function ingestBuild(payload, source) {
+async function ingestBuild(payload, source, userId) {
     const details = [];
     // ── Required field presence checks ───────────────────────────────────────
     if (!isPresent(payload.log)) {
@@ -82,6 +82,7 @@ async function ingestBuild(payload, source) {
         source,
         rawLog: payload.log,
         branch: payload.branch ?? null,
+        userId: userId ?? null,
     });
     // ── Enqueue — synchronous hand-off to the in-process queue ───────────────
     (0, jobQueue_js_1.enqueue)({ buildRecordId: record.id });

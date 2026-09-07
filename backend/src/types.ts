@@ -50,6 +50,7 @@ export interface BuildRecord {
   errorMessage: string | null;
   createdAt: Date;
   completedAt: Date | null;
+  userId: string | null;
 }
 
 // ── LLM interfaces ────────────────────────────────────────────────────────────
@@ -153,4 +154,28 @@ export interface TruncateResult {
   cleanedLog: string;
   originalLineCount: number;
   truncated: boolean;
+}
+
+// ── Authentication ─────────────────────────────────────────────────────────────
+
+export interface UserRecord {
+  id: string;
+  email: string;
+  passwordHash: string;
+  webhookSecret: string;
+  createdAt: number;
+}
+
+export interface AuthenticatedUser {
+  userId: string;
+  email: string;
+}
+
+// Express namespace augmentation so TypeScript accepts req.user in route handlers
+declare global {
+  namespace Express {
+    interface Request {
+      user?: AuthenticatedUser;
+    }
+  }
 }

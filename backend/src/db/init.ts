@@ -82,4 +82,29 @@ db.exec(`
     ON github_tokens(created_at DESC);
 `);
 
+// Create users table for per-user authentication and webhook isolation.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id              TEXT PRIMARY KEY,
+    email           TEXT NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL,
+    webhook_secret  TEXT NOT NULL UNIQUE,
+    created_at      INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_users_email
+    ON users(email);
+
+  CREATE INDEX IF NOT EXISTS idx_users_webhook_secret
+    ON users(webhook_secret);
+`);
+
+// Add user_id column to build_records if it doesn't exist yet (migration).
+const buildRecordsCols = db.pragma("table_info(build_records)") as Array<{ name: string }>;
+const hasUserId = buildRecordsCols.some((col) => col.name === "user_id");
+if (!hasUserId) {
+  db.exec(`ALTER TABLE build_records ADD COLUMN user_id TEXT REFERENCES users(id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_build_records_user_id ON build_records(user_id)`);
+}
+
 export { db };

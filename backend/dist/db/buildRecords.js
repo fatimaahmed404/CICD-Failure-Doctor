@@ -62,6 +62,7 @@ function rowToDomain(row) {
         errorMessage: row.error_message,
         createdAt: new Date(row.created_at),
         completedAt: row.completed_at ? new Date(row.completed_at) : null,
+        userId: row.user_id,
     };
 }
 /**
@@ -81,11 +82,11 @@ function insertBuildRecord(input) {
     INSERT INTO build_records
       (id, repo_name, job_name, commit_sha, branch, source, raw_log,
        cleaned_log, truncated, status, category, explanation, suggested_fix,
-       confidence, retry_count, error_message, created_at, completed_at)
+       confidence, retry_count, error_message, created_at, completed_at, user_id)
     VALUES
       (@id, @repo_name, @job_name, @commit_sha, @branch, @source, @raw_log,
        @cleaned_log, @truncated, @status, @category, @explanation, @suggested_fix,
-       @confidence, @retry_count, @error_message, @created_at, @completed_at)
+       @confidence, @retry_count, @error_message, @created_at, @completed_at, @user_id)
   `);
     stmt.run({
         id,
@@ -106,6 +107,7 @@ function insertBuildRecord(input) {
         error_message: null,
         created_at: createdAt,
         completed_at: null,
+        user_id: input.userId ?? null,
     });
     // Return the freshly inserted record as a domain object
     return getBuildRecordById(id);
@@ -193,13 +195,24 @@ function listBuildRecords(options = {}) {
     const pageSize = Math.min(100, Math.max(1, options.limit ?? 20));
     const offset = (page - 1) * pageSize;
     const category = options.category ?? null;
-    let whereClause = "";
+    const whereParts = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const filterParams = {};
     if (category !== null) {
-        whereClause = "WHERE category = @category";
+        whereParts.push("category = @category");
         filterParams.category = category;
     }
+    // userId filter: undefined = no filter, null = demo records (IS NULL), string = specific user
+    if (options.userId !== undefined) {
+        if (options.userId === null) {
+            whereParts.push("user_id IS NULL");
+        }
+        else {
+            whereParts.push("user_id = @user_id");
+            filterParams.user_id = options.userId;
+        }
+    }
+    const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
     // Total count for the current filter
     const countRow = init_js_1.db
         .prepare(`SELECT COUNT(*) AS total FROM build_records ${whereClause}`)

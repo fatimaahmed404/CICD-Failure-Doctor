@@ -70,6 +70,7 @@ function isPresent(value: unknown): value is string {
 export async function ingestBuild(
   payload: WebhookPayload | SimulatePayload,
   source: BuildSource,
+  userId?: string | null,
 ): Promise<BuildRecord> {
   const details: string[] = [];
 
@@ -112,6 +113,7 @@ export async function ingestBuild(
     source,
     rawLog: payload.log,
     branch: payload.branch ?? null,
+    userId: userId ?? null,
   });
 
   // ── Enqueue — synchronous hand-off to the in-process queue ───────────────

@@ -27,6 +27,7 @@ export interface BuildRecord {
     errorMessage: string | null;
     createdAt: Date;
     completedAt: Date | null;
+    userId: string | null;
 }
 export interface DiagnosisInput {
     cleanedLog: string;
@@ -104,5 +105,23 @@ export interface TruncateResult {
     cleanedLog: string;
     originalLineCount: number;
     truncated: boolean;
+}
+export interface UserRecord {
+    id: string;
+    email: string;
+    passwordHash: string;
+    webhookSecret: string;
+    createdAt: number;
+}
+export interface AuthenticatedUser {
+    userId: string;
+    email: string;
+}
+declare global {
+    namespace Express {
+        interface Request {
+            user?: AuthenticatedUser;
+        }
+    }
 }
 //# sourceMappingURL=types.d.ts.map

@@ -13,6 +13,7 @@ import { Router, type Request, type Response } from "express";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { ingestBuild, IngestValidationError } from "../services/ingestBuild.js";
+import { verifyToken } from "../auth/authService.js";
 import type { SimulationScenario } from "../types.js";
 
 const router = Router();
@@ -91,6 +92,16 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  // ── Resolve userId from auth cookie ──────────────────────────────────────
+  const token: string | undefined = req.cookies?.auth_token;
+  let userId: string | null = null;
+  if (token) {
+    const user = verifyToken(token);
+    if (user) {
+      userId = user.userId;
+    }
+  }
+
   // ── Load fixture ──────────────────────────────────────────────────────────
   let log: string;
   try {
@@ -102,17 +113,24 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
   }
 
   // ── Synthetic metadata ────────────────────────────────────────────────────
+  // Generate a unique commitSha per user to avoid UNIQUE constraint violations
+  // when multiple users simulate the same scenario.
+  const baseCommitSha = SCENARIO_COMMIT_SHAS[scenario];
+  const commitSha = userId
+    ? (baseCommitSha.slice(0, 32) + Buffer.from(userId).toString("hex").slice(0, 8)).slice(0, 40)
+    : baseCommitSha;
+
   const payload = {
     log,
     repoName: "demo/repo",
     jobName: "CI / simulate",
-    commitSha: SCENARIO_COMMIT_SHAS[scenario],
+    commitSha,
     branch: "main",
   };
 
   // ── Ingest (same path as real webhook) ────────────────────────────────────
   try {
-    const record = await ingestBuild(payload, "simulate");
+    const record = await ingestBuild(payload, "simulate", userId);
 
     res.status(202).json({
       id: record.id,
