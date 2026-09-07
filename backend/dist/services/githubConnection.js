@@ -273,7 +273,7 @@ async function listRepos(accessToken) {
  *
  * Requirements: 17.8, 17.9, 17.10, 17.14
  */
-async function connectRepo(accessToken, repoFullName) {
+async function connectRepo(accessToken, repoFullName, webhookSecret) {
     const parts = repoFullName.split("/");
     if (parts.length !== 2 || !parts[0] || !parts[1]) {
         throw new Error("Invalid repoFullName: expected 'owner/repo' format");
@@ -298,9 +298,9 @@ async function connectRepo(accessToken, repoFullName) {
         const encrypted = sodium.crypto_box_seal(msgBytes, keyBytes);
         return sodium.to_base64(encrypted, sodium.base64_variants.ORIGINAL);
     }
-    const webhookSecret = process.env.WEBHOOK_SECRET ?? "";
+    const secretToStore = webhookSecret ?? process.env.WEBHOOK_SECRET ?? "";
     const appBaseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
-    const encryptedWebhookSecret = sealSecret(webhookSecret);
+    const encryptedWebhookSecret = sealSecret(secretToStore);
     const encryptedAppBaseUrl = sealSecret(appBaseUrl);
     // ── Step 3: Create/update CICD_DOCTOR_SECRET ─────────────────────────────
     const secretHeaders = {

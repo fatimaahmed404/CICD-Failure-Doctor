@@ -3,23 +3,21 @@
  *
  * Route registration:
  *   GET  /config                  — always registered (feature flag endpoint)
- *   GET  /auth/github/login       — only when isOAuthEnabled() (Req 17.3)
- *   GET  /auth/github/callback    — only when isOAuthEnabled() (Req 17.4)
- *   GET  /github/repos            — only when isOAuthEnabled() (Req 17.6)
- *   POST /github/connect-repo     — only when isOAuthEnabled() (Req 17.8)
- *   DELETE /github/disconnect     — only when isOAuthEnabled() (Req 17.20)
+ *   GET  /auth/github/login       — only when isOAuthEnabled()
+ *   GET  /auth/github/callback    — only when isOAuthEnabled()
+ *   GET  /github/repos            — only when isOAuthEnabled() (requireAuth)
+ *   POST /github/connect-repo     — only when isOAuthEnabled() (requireAuth)
+ *   DELETE /github/disconnect     — only when isOAuthEnabled() (requireAuth)
  *
- * State management:
- *   The OAuth `state` parameter is stored in `req.session.oauthState` (express-session).
- *   The session augmentation below declares this field on the SessionData interface.
+ * Auth: all protected routes use the auth_token httpOnly cookie set by the
+ * auth routes. X-Client-Id header is no longer used.
  *
- * Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 17.8, 17.9,
- *               17.10, 17.15, 17.20
+ * Requirements: 17.1–17.10, 17.15, 17.19, 17.20, 18.7, 18.9
  */
 
 import { randomBytes } from "crypto";
 import { Router, type Request, type Response } from "express";
-import type {} from "express-session"; // ensure session types are loaded
+import type {} from "express-session";
 
 import {
   isOAuthEnabled,
@@ -37,15 +35,16 @@ import {
 
 import {
   upsertGitHubToken,
-  getGitHubToken,
-  deleteGitHubToken,
+  getGitHubTokenByUserId,
+  deleteGitHubTokenByUserId,
 } from "../db/githubTokens.js";
 
 import { encryptToken, decryptToken } from "../services/tokenEncryption.js";
+import requireAuth from "../auth/requireAuth.js";
+import { verifyToken } from "../auth/authService.js";
+import { getUserById } from "../db/users.js";
 
 // ── Session augmentation ──────────────────────────────────────────────────────
-// Adds `oauthState` to express-session's SessionData so TypeScript accepts
-// reading and writing it via `req.session.oauthState`.
 
 declare module "express-session" {
   interface SessionData {
@@ -57,31 +56,11 @@ declare module "express-session" {
 
 const router = Router();
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Error handler ─────────────────────────────────────────────────────────────
 
-/**
- * Extract and validate the X-Client-Id header.
- * Sends 400 and returns null when the header is absent or empty.
- */
-function requireClientId(req: Request, res: Response): string | null {
-  const header = req.headers["x-client-id"];
-  if (!header || typeof header !== "string" || header.trim() === "") {
-    res.status(400).json({ error: "Missing or empty X-Client-Id header" });
-    return null;
-  }
-  return header.trim();
-}
-
-/**
- * Map GitHub service errors to the appropriate HTTP status codes.
- * Falls through to 500 for unexpected errors.
- */
 function handleGitHubError(err: unknown, res: Response): void {
   if (err instanceof GitHubRateLimitError) {
-    res.status(429).json({
-      error: err.message,
-      resetAt: err.resetTimestamp,
-    });
+    res.status(429).json({ error: err.message, resetAt: err.resetTimestamp });
     return;
   }
   if (err instanceof GitHubAuthError) {
@@ -97,125 +76,78 @@ function handleGitHubError(err: unknown, res: Response): void {
 }
 
 // ── GET /config ───────────────────────────────────────────────────────────────
-// Always registered regardless of OAuth being enabled (Req 17.1, 17.2).
 
 router.get("/config", (_req: Request, res: Response): void => {
-  res.status(200).json({
-    features: {
-      githubOAuth: isOAuthEnabled(),
-    },
-  });
+  res.status(200).json({ features: { githubOAuth: isOAuthEnabled() } });
 });
 
-// ── OAuth routes — only registered when isOAuthEnabled() ─────────────────────
+// ── OAuth routes ──────────────────────────────────────────────────────────────
 
 if (isOAuthEnabled()) {
-  // ── GET /auth/github/login ──────────────────────────────────────────────
-  /**
-   * Generates a cryptographically random state value, stores it in the
-   * user's session, then redirects the browser to GitHub's OAuth page.
-   *
-   * Requirement: 17.3
-   */
+
+  // GET /auth/github/login — generate state, store in session, redirect to GitHub
   router.get("/auth/github/login", (req: Request, res: Response): void => {
-    // 16 random bytes → 32 hex chars (Req 17.3: "16 hex bytes using crypto.randomBytes")
     const state = randomBytes(16).toString("hex");
     req.session.oauthState = state;
-
-    const loginUrl = getLoginUrl(state);
-    res.redirect(302, loginUrl);
+    res.redirect(302, getLoginUrl(state));
   });
 
-  // ── GET /auth/github/callback ───────────────────────────────────────────
-  /**
-   * Validates the returned state, exchanges the code for an access token,
-   * encrypts and persists the token, then redirects back to the frontend.
-   *
-   * Requirements: 17.4, 17.5, 17.19
-   */
+  // GET /auth/github/callback — exchange code, persist token, redirect to frontend
   router.get(
     "/auth/github/callback",
     async (req: Request, res: Response): Promise<void> => {
-      const { code, state } = req.query as {
-        code?: string;
-        state?: string;
-      };
-
-      // ── State validation (CSRF guard) — Req 17.4 ────────────────────────
+      const { code, state } = req.query as { code?: string; state?: string };
       const storedState = req.session.oauthState;
 
+      // CSRF guard
       if (!state || !storedState || state !== storedState) {
-        // Clear any stale state before responding
         req.session.oauthState = undefined;
         res.status(400).json({ error: "Invalid OAuth state parameter" });
         return;
       }
-
-      // One-time use — clear after validation
       req.session.oauthState = undefined;
 
       if (!code) {
-        // User denied the OAuth request
-        const frontendUrl = buildFrontendUrl();
-        res.redirect(`${frontendUrl}/?github_oauth=denied`);
+        res.redirect(`${buildFrontendUrl()}/?github_oauth=denied`);
         return;
       }
 
-      // ── Determine redirect URI (must match what login used) ─────────────
-      const redirectUri = getRedirectUri();
-
       try {
-        // Exchange code for access token — Req 17.4
-        const accessToken = await exchangeCode(code, redirectUri);
-
-        // Fetch GitHub username (best-effort) — Req 17.19
+        const accessToken = await exchangeCode(code, getRedirectUri());
         const username = await fetchGitHubUsername(accessToken);
-
-        // Encrypt token before persisting — Req 17.5
         const encryptedToken = encryptToken(accessToken);
 
-        // Determine clientId: prefer X-Client-Id header, generate UUID if absent
-        const clientIdHeader = req.headers["x-client-id"];
-        const clientId =
-          typeof clientIdHeader === "string" && clientIdHeader.trim() !== ""
-            ? clientIdHeader.trim()
-            : generateClientId();
+        // Associate the token with the authenticated user if a valid session cookie is present.
+        // The callback arrives as a browser redirect so requireAuth is not applied here —
+        // we read the cookie manually with verifyToken (non-throwing).
+        const authCookie: string | undefined = req.cookies?.auth_token;
+        const userId = authCookie ? (verifyToken(authCookie)?.userId ?? null) : null;
 
-        // Persist encrypted token — Req 17.4, 17.5, 17.18
-        upsertGitHubToken(clientId, encryptedToken, username);
+        // clientId is kept for legacy redirect params only
+        const clientId = generateClientId();
+        upsertGitHubToken(clientId, encryptedToken, username, userId);
 
-        // Redirect back to the frontend with success signal — Req 17.4
-        const frontendUrl = buildFrontendUrl();
         const params = new URLSearchParams({ connected: "true" });
         if (username) params.set("username", username);
         params.set("client_id", clientId);
-        res.redirect(`${frontendUrl}/?${params.toString()}`);
+        res.redirect(`${buildFrontendUrl()}/?${params.toString()}`);
       } catch (err) {
         console.error("[github/callback] Token exchange error:", err);
-        const frontendUrl = buildFrontendUrl();
-        res.redirect(`${frontendUrl}/?github_oauth=error`);
+        res.redirect(`${buildFrontendUrl()}/?github_oauth=error`);
       }
     },
   );
 
-  // ── GET /github/repos ───────────────────────────────────────────────────
-  /**
-   * Returns repositories where the authenticated user has push access.
-   *
-   * Requirements: 17.6, 17.7
-   */
+  // GET /github/repos — list repos for the authenticated user
   router.get(
     "/github/repos",
+    requireAuth,
     async (req: Request, res: Response): Promise<void> => {
-      const clientId = requireClientId(req, res);
-      if (!clientId) return;
+      const userId = req.user!.userId;
 
-      // Retrieve and decrypt stored token
-      const record = getGitHubToken(clientId);
+      const record = getGitHubTokenByUserId(userId);
       if (!record) {
-        res.status(401).json({
-          error: "No GitHub account connected. Please connect your account first.",
-        });
+        res.status(401).json({ error: "No GitHub account connected. Please connect your account first." });
         return;
       }
 
@@ -223,9 +155,7 @@ if (isOAuthEnabled()) {
       try {
         accessToken = decryptToken(record.encryptedToken);
       } catch {
-        res.status(401).json({
-          error: "Stored token could not be decrypted. Please reconnect your account.",
-        });
+        res.status(401).json({ error: "Stored token could not be decrypted. Please reconnect your account." });
         return;
       }
 
@@ -238,17 +168,12 @@ if (isOAuthEnabled()) {
     },
   );
 
-  // ── POST /github/connect-repo ───────────────────────────────────────────
-  /**
-   * Connects a repository by creating secrets and adding a workflow file.
-   *
-   * Requirements: 17.8, 17.9, 17.10, 17.14, 17.15
-   */
+  // POST /github/connect-repo — create repo secrets + workflow file
   router.post(
     "/github/connect-repo",
+    requireAuth,
     async (req: Request, res: Response): Promise<void> => {
-      const clientId = requireClientId(req, res);
-      if (!clientId) return;
+      const userId = req.user!.userId;
 
       const body = req.body as { repoFullName?: string };
       const repoFullName = body.repoFullName?.trim();
@@ -257,12 +182,9 @@ if (isOAuthEnabled()) {
         return;
       }
 
-      // Retrieve and decrypt stored token
-      const record = getGitHubToken(clientId);
+      const record = getGitHubTokenByUserId(userId);
       if (!record) {
-        res.status(401).json({
-          error: "No GitHub account connected. Please connect your account first.",
-        });
+        res.status(401).json({ error: "No GitHub account connected. Please connect your account first." });
         return;
       }
 
@@ -270,23 +192,22 @@ if (isOAuthEnabled()) {
       try {
         accessToken = decryptToken(record.encryptedToken);
       } catch {
-        res.status(401).json({
-          error: "Stored token could not be decrypted. Please reconnect your account.",
-        });
+        res.status(401).json({ error: "Stored token could not be decrypted. Please reconnect your account." });
         return;
       }
 
+      // Use the user's personal webhook secret so their CI pipelines are
+      // attributed to their account (not the shared app-level secret).
+      const userRecord = getUserById(userId);
+      const userWebhookSecret = userRecord?.webhookSecret ?? process.env.WEBHOOK_SECRET ?? "";
+
       try {
-        const result = await connectRepo(accessToken, repoFullName);
+        const result = await connectRepo(accessToken, repoFullName, userWebhookSecret);
 
         if ("success" in result) {
-          // Full success — Req 17.8
-          const success = result as ConnectRepoSuccess;
-          res.status(200).json(success);
+          res.status(200).json(result as ConnectRepoSuccess);
         } else {
-          // Partial success: secrets created, workflow file failed — Req 17.9
-          const partial = result as ConnectRepoPartial;
-          res.status(207).json(partial);
+          res.status(207).json(result as ConnectRepoPartial);
         }
       } catch (err) {
         handleGitHubError(err, res);
@@ -294,19 +215,12 @@ if (isOAuthEnabled()) {
     },
   );
 
-  // ── DELETE /github/disconnect ───────────────────────────────────────────
-  /**
-   * Removes the stored OAuth token for the client (disconnect flow).
-   *
-   * Requirement: 17.20
-   */
+  // DELETE /github/disconnect — remove stored OAuth token
   router.delete(
     "/github/disconnect",
+    requireAuth,
     (req: Request, res: Response): void => {
-      const clientId = requireClientId(req, res);
-      if (!clientId) return;
-
-      deleteGitHubToken(clientId);
+      deleteGitHubTokenByUserId(req.user!.userId);
       res.status(200).json({ success: true });
     },
   );
@@ -314,44 +228,24 @@ if (isOAuthEnabled()) {
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-/** Resolve the frontend base URL for post-OAuth redirects.
- *
- * Priority:
- *   1. FRONTEND_URL env var (set this in production — Vercel URL)
- *   2. Local dev heuristic: replace :3000 with :5173
- */
 function buildFrontendUrl(): string {
-  if (process.env.FRONTEND_URL && process.env.FRONTEND_URL.trim() !== "") {
-    return process.env.FRONTEND_URL.trim();
-  }
+  if (process.env.FRONTEND_URL?.trim()) return process.env.FRONTEND_URL.trim();
   const base = process.env.APP_BASE_URL ?? "http://localhost:3000";
   return base.includes(":3000") ? base.replace(":3000", ":5173") : base;
 }
 
-/** Build the redirect URI that was used when constructing the login URL. */
 function getRedirectUri(): string {
   if (process.env.GITHUB_REDIRECT_URI) return process.env.GITHUB_REDIRECT_URI;
   const base = process.env.APP_BASE_URL ?? "http://localhost:3000";
   return `${base}/auth/github/callback`;
 }
 
-/**
- * Generate a new random UUID v4 for clients that don't send X-Client-Id.
- * This matches the UUID v4 pattern used elsewhere in the app.
- */
 function generateClientId(): string {
-  // Use the uuid package pattern: 8-4-4-4-12 hex chars with version bits set
   const bytes = randomBytes(16);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40; // version 4
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80; // variant bits
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    hex.slice(12, 16),
-    hex.slice(16, 20),
-    hex.slice(20, 32),
-  ].join("-");
+  return [hex.slice(0,8), hex.slice(8,12), hex.slice(12,16), hex.slice(16,20), hex.slice(20,32)].join("-");
 }
 
 export { router as githubRouter };

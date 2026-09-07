@@ -3,18 +3,16 @@
  *
  * Route registration:
  *   GET  /config                  — always registered (feature flag endpoint)
- *   GET  /auth/github/login       — only when isOAuthEnabled() (Req 17.3)
- *   GET  /auth/github/callback    — only when isOAuthEnabled() (Req 17.4)
- *   GET  /github/repos            — only when isOAuthEnabled() (Req 17.6)
- *   POST /github/connect-repo     — only when isOAuthEnabled() (Req 17.8)
- *   DELETE /github/disconnect     — only when isOAuthEnabled() (Req 17.20)
+ *   GET  /auth/github/login       — only when isOAuthEnabled()
+ *   GET  /auth/github/callback    — only when isOAuthEnabled()
+ *   GET  /github/repos            — only when isOAuthEnabled() (requireAuth)
+ *   POST /github/connect-repo     — only when isOAuthEnabled() (requireAuth)
+ *   DELETE /github/disconnect     — only when isOAuthEnabled() (requireAuth)
  *
- * State management:
- *   The OAuth `state` parameter is stored in `req.session.oauthState` (express-session).
- *   The session augmentation below declares this field on the SessionData interface.
+ * Auth: all protected routes use the auth_token httpOnly cookie set by the
+ * auth routes. X-Client-Id header is no longer used.
  *
- * Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 17.8, 17.9,
- *               17.10, 17.15, 17.20
+ * Requirements: 17.1–17.10, 17.15, 17.19, 17.20, 18.7, 18.9
  */
 declare module "express-session" {
     interface SessionData {
