@@ -314,12 +314,17 @@ if (isOAuthEnabled()) {
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-/** Resolve the frontend base URL for post-OAuth redirects. */
+/** Resolve the frontend base URL for post-OAuth redirects.
+ *
+ * Priority:
+ *   1. FRONTEND_URL env var (set this in production — Vercel URL)
+ *   2. Local dev heuristic: replace :3000 with :5173
+ */
 function buildFrontendUrl(): string {
-  // In dev the frontend runs on a different port (5173); in production
-  // both are served from APP_BASE_URL.
+  if (process.env.FRONTEND_URL && process.env.FRONTEND_URL.trim() !== "") {
+    return process.env.FRONTEND_URL.trim();
+  }
   const base = process.env.APP_BASE_URL ?? "http://localhost:3000";
-  // Heuristic: if the base URL uses port 3000, assume frontend is on 5173
   return base.includes(":3000") ? base.replace(":3000", ":5173") : base;
 }
 
