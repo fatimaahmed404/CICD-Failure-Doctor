@@ -4,9 +4,8 @@ import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 import type { DiagnosisDetail as DiagnosisDetailType } from '../types';
-import { getOrCreateClientId, postFeedback } from '../api';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+import { getOrCreateClientId, postFeedback, fetchDiagnosisById } from '../api';
+import { useAuth } from '../contexts/AuthContext';
 
 // Local storage key for persisting ratings per diagnosis
 const RATINGS_STORAGE_KEY = 'cicd-doctor-ratings';
@@ -20,6 +19,7 @@ interface RatingsCache {
 const DiagnosisDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [diagnosis, setDiagnosis] = useState<DiagnosisDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,16 +28,10 @@ const DiagnosisDetail: React.FC = () => {
   const [submittingRating, setSubmittingRating] = useState(false);
 
   useEffect(() => {
-    const fetchDiagnosis = async () => {
+    const load = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/diagnoses/${id}`);
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error('Diagnosis not found');
-          }
-          throw new Error(`Failed to fetch diagnosis: ${response.statusText}`);
-        }
-        const data = await response.json();
+        if (!id) throw new Error('No diagnosis ID');
+        const data = await fetchDiagnosisById(id);
         setDiagnosis(data);
         setError(null);
       } catch (err) {
@@ -48,7 +42,7 @@ const DiagnosisDetail: React.FC = () => {
       }
     };
 
-    fetchDiagnosis();
+    load();
   }, [id]);
 
   // Load existing rating from localStorage on mount
@@ -252,7 +246,8 @@ const DiagnosisDetail: React.FC = () => {
               </div>
             </div>
 
-            {/* Helpfulness Feedback */}
+            {/* Helpfulness Feedback — only shown to authenticated users */}
+            {user && (
             <div className="diagnosis-section feedback-section">
               <h3>Was this diagnosis helpful?</h3>
               <div className="feedback-buttons">
@@ -276,6 +271,7 @@ const DiagnosisDetail: React.FC = () => {
                 </button>
               </div>
             </div>
+            )}
           </>
         )}
 
