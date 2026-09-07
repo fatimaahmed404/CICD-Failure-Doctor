@@ -7,39 +7,6 @@
  *
  * Requirements: 11.2, 11.4
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -52,13 +19,17 @@ require("dotenv/config");
 // ---- Dependencies ------------------------------------------------------------
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
+const crypto_1 = require("crypto");
 // Initialize the SQLite database and run schema migrations at startup
 require("./db/init.js");
 const express_rate_limit_1 = require("express-rate-limit");
+const express_session_1 = __importDefault(require("express-session"));
 const diagnoses_js_1 = require("./routes/diagnoses.js");
 const webhook_js_1 = __importDefault(require("./routes/webhook.js"));
 const simulate_js_1 = __importDefault(require("./routes/simulate.js"));
 const feedback_js_1 = require("./routes/feedback.js");
+const github_js_1 = require("./routes/github.js");
+const githubConnection_js_1 = require("./services/githubConnection.js");
 // ---- CORS configuration ------------------------------------------------------
 const CORS_ORIGINS = process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
@@ -80,6 +51,28 @@ const app = (0, express_1.default)();
 exports.app = app;
 // CORS must be applied before all routes
 app.use((0, cors_1.default)({ origin: CORS_ORIGINS }));
+// ── Session middleware (required for OAuth state parameter) ───────────────────
+// SESSION_SECRET should be set in production. If absent, a random secret is
+// generated so the server still starts, but sessions won't persist across restarts.
+const sessionSecret = (() => {
+    if (process.env.SESSION_SECRET && process.env.SESSION_SECRET.trim() !== "") {
+        return process.env.SESSION_SECRET.trim();
+    }
+    const fallback = (0, crypto_1.randomBytes)(32).toString("hex");
+    console.warn("[startup] SESSION_SECRET not set — sessions will not persist across restarts");
+    return fallback;
+})();
+app.use((0, express_session_1.default)({
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 10 * 60 * 1000, // 10 minutes — long enough to complete OAuth flow
+    },
+}));
 app.use(express_1.default.json({ limit: "10mb" }));
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 // ---- Routes ------------------------------------------------------------------
@@ -94,30 +87,16 @@ app.use("/diagnoses", diagnoses_js_1.diagnosesRouter);
 app.use("/feedback", feedback_js_1.feedbackRouter);
 // Also mount feedback POST route under /diagnoses/:id/feedback
 app.use("/diagnoses", feedback_js_1.feedbackRouter);
-// ---- Config endpoint (Req 17.1, 17.2) ----------------------------------------
-// Returns feature flags so the frontend can show/hide optional features.
-app.get("/config", (_req, res) => {
-    const githubOAuth = !!process.env.GITHUB_CLIENT_ID?.trim() &&
-        !!process.env.GITHUB_CLIENT_SECRET?.trim();
-    res.status(200).json({
-        features: {
-            githubOAuth,
-        },
-    });
-});
-// ---- GitHub OAuth routes (conditionally registered) -------------------------
-// Only mount if both GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are configured.
+// ── GitHub OAuth routes (includes /config, /auth/github/*, /github/*) ─────────
+// githubRouter always exposes GET /config.
+// All OAuth-specific routes (/auth/github/login, /auth/github/callback,
+// /github/repos, /github/connect-repo, /github/disconnect) are self-gated
+// inside the router by isOAuthEnabled() — they are only registered when both
+// GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are set.
 // Requirements: 17.1, 17.2
-const githubOAuthEnabled = !!process.env.GITHUB_CLIENT_ID?.trim() &&
-    !!process.env.GITHUB_CLIENT_SECRET?.trim();
-if (githubOAuthEnabled) {
-    // Dynamic import so the module (and libsodium) only loads when needed
-    Promise.resolve().then(() => __importStar(require("./routes/github.js"))).then(({ githubRouter }) => {
-        app.use(githubRouter);
-        console.log("[server] GitHub OAuth routes registered");
-    }).catch((err) => {
-        console.error("[server] Failed to load GitHub OAuth routes:", err);
-    });
+app.use(github_js_1.githubRouter);
+if ((0, githubConnection_js_1.isOAuthEnabled)()) {
+    console.log("[server] GitHub OAuth routes registered");
 }
 // Health endpoint — used by uptime monitors to prevent free-tier cold starts
 // Requirements: 11.4
@@ -142,7 +121,7 @@ app.use((err, _req, res, _next) => {
 // ---- Start server ------------------------------------------------------------
 app.listen(PORT, () => {
     console.log(`[server] Listening on port ${PORT}`);
-    if (githubOAuthEnabled) {
+    if ((0, githubConnection_js_1.isOAuthEnabled)()) {
         console.log("[server] GitHub OAuth is ENABLED");
     }
 });

@@ -28,7 +28,7 @@ function rowToDomain(row) {
  * Requirement: 17.18
  */
 function upsertGitHubToken(clientId, encryptedToken, githubUsername) {
-    const now = Date.now();
+    const now = new Date().toISOString();
     init_js_1.db.prepare(`
     INSERT INTO github_tokens (client_id, encrypted_token, github_username, created_at)
     VALUES (@client_id, @encrypted_token, @github_username, @created_at)

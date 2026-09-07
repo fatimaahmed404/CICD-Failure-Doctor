@@ -74,10 +74,10 @@ db.exec(`
     client_id       TEXT PRIMARY KEY,
     encrypted_token TEXT NOT NULL,
     github_username TEXT,
-    created_at      INTEGER NOT NULL
+    created_at      TEXT NOT NULL
   );
 
-  CREATE INDEX IF NOT EXISTS idx_github_tokens_client_id
-    ON github_tokens(client_id);
+  CREATE INDEX IF NOT EXISTS idx_github_tokens_created
+    ON github_tokens(created_at DESC);
 `);
 //# sourceMappingURL=init.js.map
