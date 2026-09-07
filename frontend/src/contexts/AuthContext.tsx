@@ -31,6 +31,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     await apiLogout();
+    // Clear the stored user ID so App.tsx detects the account switch
+    // and wipes GitHub OAuth localStorage keys for the next user
+    localStorage.removeItem('cicd-doctor-user-id');
     setUser(null);
   };
 
