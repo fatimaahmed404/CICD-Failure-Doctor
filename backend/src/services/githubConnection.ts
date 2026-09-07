@@ -171,7 +171,7 @@ export function getLoginUrl(state: string): string {
 
   const params = new URLSearchParams({
     client_id: clientId,
-    scope: "repo",
+    scope: "repo workflow",
     redirect_uri: redirectUri,
     state,
   });
@@ -486,9 +486,10 @@ export async function connectRepo(
  * Requirements: 17.8, 17.14
  */
 function buildWorkflowYaml(): string {
+  // NOTE: Each ${{ }} must be escaped as \${{ }} inside a TypeScript template literal.
   return `# CI/CD Failure Doctor — auto-generated workflow
-# Sends failed build logs to CI/CD Failure Doctor for AI analysis.
-# Secrets CICD_DOCTOR_SECRET and CICD_DOCTOR_URL were added automatically.
+# Triggered when any workflow in this repo fails.
+# Secrets CICD_DOCTOR_SECRET and CICD_DOCTOR_URL were configured automatically.
 name: Notify CI/CD Failure Doctor on Failure
 
 on:
@@ -497,30 +498,35 @@ on:
     types: [completed]
 
 jobs:
-  notify-failure-doctor:
+  notify:
     if: \${{ github.event.workflow_run.conclusion == 'failure' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
+      contents: read
     steps:
-      - name: Send failure notification
-        env:
-          GH_TOKEN: \${{ github.token }}
-          CICD_DOCTOR_URL: \${{ secrets.CICD_DOCTOR_URL }}
-          CICD_DOCTOR_SECRET: \${{ secrets.CICD_DOCTOR_SECRET }}
+      - name: Send logs to CI/CD Failure Doctor
         run: |
-          LOG=$(gh run view \${{ github.event.workflow_run.id }} --log-failed \\
-                  --repo \${{ github.repository }} 2>/dev/null | tail -c 15000 || echo "Log unavailable")
-          PAYLOAD=$(jq -n \\
-            --arg log     "$LOG" \\
-            --arg repo    "\${{ github.repository }}" \\
-            --arg job     "\${{ github.event.workflow_run.name }}" \\
-            --arg sha     "\${{ github.event.workflow_run.head_sha }}" \\
-            --arg branch  "\${{ github.event.workflow_run.head_branch }}" \\
-            '{log: $log, repoName: $repo, jobName: $job, commitSha: $sha, source: "github", branch: $branch}')
-          curl -sf -X POST "$CICD_DOCTOR_URL/webhook/ingest" \\
-            -H "Content-Type: application/json" \\
-            -H "X-Webhook-Secret: $CICD_DOCTOR_SECRET" \\
-            -d "$PAYLOAD" || echo "Warning: delivery failed (non-fatal)"
+          # Download run logs using the GitHub REST API (no extra tools needed)
+          LOGS=$(curl -s \
+            -H "Authorization: Bearer \${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/\${{ github.repository }}/actions/runs/\${{ github.event.workflow_run.id }}/logs" \
+            -L -o /tmp/run_logs.zip 2>&1 \
+            && unzip -p /tmp/run_logs.zip 2>/dev/null | tail -c 15000 || echo "Log unavailable")
+
+          # Build JSON with jq so special characters are safely escaped
+          PAYLOAD=$(jq -nc \
+            --arg log    "$LOGS" \
+            --arg repo   "\${{ github.repository }}" \
+            --arg job    "\${{ github.event.workflow_run.name }}" \
+            --arg sha    "\${{ github.event.workflow_run.head_sha }}" \
+            --arg branch "\${{ github.event.workflow_run.head_branch }}" \
+            '{log:$log,repoName:$repo,jobName:$job,commitSha:$sha,source:"github",branch:$branch}')
+
+          curl -sf -X POST "\${{ secrets.CICD_DOCTOR_URL }}/webhook/ingest" \
+            -H "Content-Type: application/json" \
+            -H "X-Webhook-Secret: \${{ secrets.CICD_DOCTOR_SECRET }}" \
+            -d "$PAYLOAD" && echo "Notification sent" || echo "Notification failed (non-fatal)"
 `;
 }

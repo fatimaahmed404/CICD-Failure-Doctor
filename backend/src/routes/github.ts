@@ -207,7 +207,16 @@ if (isOAuthEnabled()) {
         if ("success" in result) {
           res.status(200).json(result as ConnectRepoSuccess);
         } else {
-          res.status(207).json(result as ConnectRepoPartial);
+          // Map backend field names to what the frontend expects
+          const partial = result as ConnectRepoPartial;
+          console.error("[connectRepo] Partial success — workflow file failed:", partial.error);
+          res.status(207).json({
+            secretsCreated: true,
+            workflowError: partial.error,
+            repoFullName,
+            manualSetupUrl: partial.manualSetupUrl,
+            message: `Repository secrets were created but the workflow file could not be added automatically. Error: ${partial.error}`,
+          });
         }
       } catch (err) {
         handleGitHubError(err, res);
