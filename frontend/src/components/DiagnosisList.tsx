@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DiagnosisSummary, SimulationScenario } from '../types';
 import GitHubConnect from './GitHubConnect';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+import OnboardingCard from './OnboardingCard';
+import { fetchDiagnoses as apiFetchDiagnoses, postSimulate } from '../api';
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -40,13 +40,9 @@ const DiagnosisList: React.FC<DiagnosisListProps> = ({
   const [selectedScenario, setSelectedScenario] = useState<SimulationScenario>('test-failure');
   const [simulateLoading, setSimulateLoading] = useState(false);
 
-  const fetchDiagnoses = useCallback(async () => {
+  const loadDiagnoses = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/diagnoses`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch diagnoses: ${response.statusText}`);
-      }
-      const data = await response.json();
+      const data = await apiFetchDiagnoses();
       setDiagnoses(data.data);
       setError(null);
       setLoading(false);
@@ -58,24 +54,19 @@ const DiagnosisList: React.FC<DiagnosisListProps> = ({
   }, []);
 
   useEffect(() => {
-    fetchDiagnoses();
-  }, [fetchDiagnoses]);
+    loadDiagnoses();
+  }, [loadDiagnoses]);
 
   useEffect(() => {
-    const intervalId = setInterval(fetchDiagnoses, POLL_INTERVAL_MS);
+    const intervalId = setInterval(loadDiagnoses, POLL_INTERVAL_MS);
     return () => clearInterval(intervalId);
-  }, [fetchDiagnoses]);
+  }, [loadDiagnoses]);
 
   const handleSimulate = async () => {
     setSimulateLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/simulate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario: selectedScenario }),
-      });
-      if (!response.ok) throw new Error(`Simulation failed: ${response.statusText}`);
-      await fetchDiagnoses();
+      await postSimulate(selectedScenario);
+      await loadDiagnoses();
     } catch (err) {
       console.error('Simulate error:', err);
       alert(err instanceof Error ? err.message : 'Failed to simulate build');
@@ -122,6 +113,9 @@ const DiagnosisList: React.FC<DiagnosisListProps> = ({
         <h1>CI/CD Failure Doctor</h1>
         <p className="subtitle">Automated AI-powered build failure diagnosis</p>
       </header>
+
+      {/* Onboarding card — shows webhook secret for new users */}
+      <OnboardingCard />
 
       {/* GitHub Connect — only shown when feature flag is on (Req 17.11) */}
       {githubOAuthEnabled && (
