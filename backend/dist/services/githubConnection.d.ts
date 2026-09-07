@@ -135,5 +135,5 @@ export declare function listRepos(accessToken: string): Promise<GitHubRepo[]>;
  *
  * Requirements: 17.8, 17.9, 17.10, 17.14
  */
-export declare function connectRepo(accessToken: string, repoFullName: string): Promise<ConnectRepoResult>;
+export declare function connectRepo(accessToken: string, repoFullName: string, webhookSecret?: string): Promise<ConnectRepoResult>;
 //# sourceMappingURL=githubConnection.d.ts.map

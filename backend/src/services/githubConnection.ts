@@ -317,6 +317,7 @@ export async function listRepos(accessToken: string): Promise<GitHubRepo[]> {
 export async function connectRepo(
   accessToken: string,
   repoFullName: string,
+  webhookSecret?: string,
 ): Promise<ConnectRepoResult> {
   const parts = repoFullName.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
@@ -354,10 +355,10 @@ export async function connectRepo(
     return sodium.to_base64(encrypted, sodium.base64_variants.ORIGINAL);
   }
 
-  const webhookSecret = process.env.WEBHOOK_SECRET ?? "";
+  const secretToStore = webhookSecret ?? process.env.WEBHOOK_SECRET ?? "";
   const appBaseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
 
-  const encryptedWebhookSecret = sealSecret(webhookSecret);
+  const encryptedWebhookSecret = sealSecret(secretToStore);
   const encryptedAppBaseUrl = sealSecret(appBaseUrl);
 
   // ── Step 3: Create/update CICD_DOCTOR_SECRET ─────────────────────────────

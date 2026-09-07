@@ -107,4 +107,11 @@ if (!hasUserId) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_build_records_user_id ON build_records(user_id)`);
 }
 
+// Add user_id column to github_tokens if it doesn't exist yet (migration).
+const githubTokensCols = (db.pragma("table_info(github_tokens)") as Array<{ name: string }>);
+if (!githubTokensCols.some((col) => col.name === "user_id")) {
+  db.exec(`ALTER TABLE github_tokens ADD COLUMN user_id TEXT REFERENCES users(id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_github_tokens_user_id ON github_tokens(user_id)`);
+}
+
 export { db };
