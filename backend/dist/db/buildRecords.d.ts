@@ -19,6 +19,7 @@ export interface InsertBuildRecordInput {
     source: BuildSource;
     rawLog: string;
     branch?: string | null;
+    userId?: string | null;
 }
 /**
  * Inserts a new BuildRecord with `status = "pending"`.
@@ -65,6 +66,7 @@ export interface ListBuildRecordsOptions {
     page?: number;
     limit?: number;
     category?: FailureCategory | null;
+    userId?: string | null;
 }
 export interface BuildRecordPage {
     data: BuildRecord[];

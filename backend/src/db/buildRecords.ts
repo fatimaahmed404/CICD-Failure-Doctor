@@ -76,6 +76,7 @@ interface BuildRecordRow {
   error_message: string | null;
   created_at: string;
   completed_at: string | null;
+  user_id: string | null;
 }
 
 function rowToDomain(row: BuildRecordRow): BuildRecord {
@@ -98,6 +99,7 @@ function rowToDomain(row: BuildRecordRow): BuildRecord {
     errorMessage: row.error_message,
     createdAt: new Date(row.created_at),
     completedAt: row.completed_at ? new Date(row.completed_at) : null,
+    userId: row.user_id,
   };
 }
 
@@ -110,6 +112,7 @@ export interface InsertBuildRecordInput {
   source: BuildSource;
   rawLog: string;
   branch?: string | null;
+  userId?: string | null;
 }
 
 /**
@@ -131,11 +134,11 @@ export function insertBuildRecord(input: InsertBuildRecordInput): BuildRecord {
     INSERT INTO build_records
       (id, repo_name, job_name, commit_sha, branch, source, raw_log,
        cleaned_log, truncated, status, category, explanation, suggested_fix,
-       confidence, retry_count, error_message, created_at, completed_at)
+       confidence, retry_count, error_message, created_at, completed_at, user_id)
     VALUES
       (@id, @repo_name, @job_name, @commit_sha, @branch, @source, @raw_log,
        @cleaned_log, @truncated, @status, @category, @explanation, @suggested_fix,
-       @confidence, @retry_count, @error_message, @created_at, @completed_at)
+       @confidence, @retry_count, @error_message, @created_at, @completed_at, @user_id)
   `);
 
   stmt.run({
@@ -157,6 +160,7 @@ export function insertBuildRecord(input: InsertBuildRecordInput): BuildRecord {
     error_message: null,
     created_at: createdAt,
     completed_at: null,
+    user_id: input.userId ?? null,
   });
 
   // Return the freshly inserted record as a domain object
@@ -275,6 +279,7 @@ export interface ListBuildRecordsOptions {
   page?: number;      // 1-based, default 1
   limit?: number;     // default 20, max 100
   category?: FailureCategory | null;
+  userId?: string | null;  // undefined = no filter; null = demo records; string = user records
 }
 
 export interface BuildRecordPage {
@@ -299,14 +304,26 @@ export function listBuildRecords(
   const offset = (page - 1) * pageSize;
   const category = options.category ?? null;
 
-  let whereClause = "";
+  const whereParts: string[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const filterParams: Record<string, any> = {};
 
   if (category !== null) {
-    whereClause = "WHERE category = @category";
+    whereParts.push("category = @category");
     filterParams.category = category;
   }
+
+  // userId filter: undefined = no filter, null = demo records (IS NULL), string = specific user
+  if (options.userId !== undefined) {
+    if (options.userId === null) {
+      whereParts.push("user_id IS NULL");
+    } else {
+      whereParts.push("user_id = @user_id");
+      filterParams.user_id = options.userId;
+    }
+  }
+
+  const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
 
   // Total count for the current filter
   const countRow = db

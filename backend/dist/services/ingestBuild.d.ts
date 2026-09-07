@@ -36,5 +36,5 @@ export declare class IngestValidationError extends Error {
  *
  * Requirements: 1.1, 1.3, 1.4, 10.2, 10.3, 10.4
  */
-export declare function ingestBuild(payload: WebhookPayload | SimulatePayload, source: BuildSource): Promise<BuildRecord>;
+export declare function ingestBuild(payload: WebhookPayload | SimulatePayload, source: BuildSource, userId?: string | null): Promise<BuildRecord>;
 //# sourceMappingURL=ingestBuild.d.ts.map

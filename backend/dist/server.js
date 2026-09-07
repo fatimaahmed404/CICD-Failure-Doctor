@@ -19,11 +19,12 @@ require("dotenv/config");
 // ---- Dependencies ------------------------------------------------------------
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
-const crypto_1 = require("crypto");
+const cookie_parser_1 = __importDefault(require("cookie-parser"));
 // Initialize the SQLite database and run schema migrations at startup
 require("./db/init.js");
 const express_rate_limit_1 = require("express-rate-limit");
 const express_session_1 = __importDefault(require("express-session"));
+const auth_js_1 = require("./routes/auth.js");
 const diagnoses_js_1 = require("./routes/diagnoses.js");
 const webhook_js_1 = __importDefault(require("./routes/webhook.js"));
 const simulate_js_1 = __importDefault(require("./routes/simulate.js"));
@@ -49,39 +50,41 @@ const postRouteLimiter = (0, express_rate_limit_1.rateLimit)({
 // ---- App setup ---------------------------------------------------------------
 const app = (0, express_1.default)();
 exports.app = app;
-// CORS must be applied before all routes
-app.use((0, cors_1.default)({ origin: CORS_ORIGINS }));
+// Trust proxy — required for rate limiter and secure cookies behind a reverse proxy
+app.set("trust proxy", 1);
+// CORS must be applied before all routes, with credentials support for cookies
+const IS_PROD = process.env.NODE_ENV === "production";
+app.use((0, cors_1.default)({ origin: CORS_ORIGINS, credentials: true }));
 // ── Session middleware (required for OAuth state parameter) ───────────────────
-// SESSION_SECRET should be set in production. If absent, a random secret is
-// generated so the server still starts, but sessions won't persist across restarts.
-const sessionSecret = (() => {
-    if (process.env.SESSION_SECRET && process.env.SESSION_SECRET.trim() !== "") {
-        return process.env.SESSION_SECRET.trim();
-    }
-    const fallback = (0, crypto_1.randomBytes)(32).toString("hex");
-    console.warn("[startup] SESSION_SECRET not set — sessions will not persist across restarts");
-    return fallback;
-})();
+// SESSION_SECRET is required — startup.ts exits if absent when added to REQUIRED_ENV_VARS.
+// For now we read it from env without a fallback.
+const sessionSecret = process.env.SESSION_SECRET ?? "fallback-dev-only";
 app.use((0, express_session_1.default)({
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
+        secure: IS_PROD,
+        sameSite: IS_PROD ? "none" : "lax",
         maxAge: 10 * 60 * 1000, // 10 minutes — long enough to complete OAuth flow
     },
 }));
+// Cookie parser must be before auth routes so req.cookies is available
+app.use((0, cookie_parser_1.default)());
 app.use(express_1.default.json({ limit: "10mb" }));
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 // ---- Routes ------------------------------------------------------------------
+// Auth routes (signup, login, logout, /auth/me)
+app.use(auth_js_1.authRouter);
 // Webhook ingestion (POST /webhook/ingest) — rate limited
 app.use(postRouteLimiter, webhook_js_1.default);
 // Simulate (POST /simulate) — rate limited
 app.use("/simulate", postRouteLimiter, simulate_js_1.default);
 // Diagnoses API (GET /diagnoses, GET /diagnoses/:id)
 app.use("/diagnoses", diagnoses_js_1.diagnosesRouter);
+// Public diagnoses (demo records only, no auth required)
+app.use("/public", diagnoses_js_1.publicDiagnosesRouter);
 // Feedback API (POST /diagnoses/:id/feedback mounted via feedbackRouter)
 // GET /feedback/stats
 app.use("/feedback", feedback_js_1.feedbackRouter);

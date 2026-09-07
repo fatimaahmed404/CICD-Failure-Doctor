@@ -113,6 +113,7 @@ describe("ingestBuild", () => {
           source: "github",
           rawLog: VALID_PAYLOAD.log,
           branch: "main",
+          userId: null,
         });
 
         // The job must be enqueued with the newly created record's id.

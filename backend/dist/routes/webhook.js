@@ -74,7 +74,7 @@ async (req, res) => {
     const source = rawSource;
     // ── Ingest (validates remaining fields, persists record, enqueues job) ──
     try {
-        const record = await (0, ingestBuild_js_1.ingestBuild)(body, source);
+        const record = await (0, ingestBuild_js_1.ingestBuild)(body, source, authResult.userId);
         res.status(202).json({ id: record.id, status: "pending" });
     }
     catch (err) {

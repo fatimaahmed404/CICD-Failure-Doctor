@@ -8,11 +8,12 @@
  * Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 11.4
  */
 
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import {
   getBuildRecordById,
   listBuildRecords,
 } from "../db/buildRecords.js";
+import { verifyToken } from "../auth/authService.js";
 import type {
   BuildRecord,
   DiagnosisSummary,
@@ -34,6 +35,22 @@ const VALID_CATEGORIES: ReadonlySet<string> = new Set<FailureCategory>([
   "syntax-lint-error",
   "unknown",
 ]);
+
+// ── optionalAuth middleware ───────────────────────────────────────────────────
+
+/**
+ * Reads `auth_token` cookie; if valid, sets req.user.  Always calls next().
+ */
+function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
+  const token: string | undefined = req.cookies?.auth_token;
+  if (token) {
+    const user = verifyToken(token);
+    if (user) {
+      req.user = user;
+    }
+  }
+  next();
+}
 
 // ── Mappers ───────────────────────────────────────────────────────────────────
 
@@ -84,7 +101,7 @@ function toDetail(record: BuildRecord): DiagnosisDetail {
  *
  * Requirements: 7.1, 7.2, 7.5, 7.6, 7.7
  */
-router.get("/", (req: Request, res: Response): void => {
+router.get("/", optionalAuth, (req: Request, res: Response): void => {
   const rawPage = req.query.page;
   const rawLimit = req.query.limit;
   const rawCategory = req.query.category;
@@ -107,7 +124,10 @@ router.get("/", (req: Request, res: Response): void => {
       ? (rawCategory as FailureCategory)
       : null;
 
-  const result = listBuildRecords({ page, limit, category });
+  // Authenticated users see their own records; unauthenticated see demo records (userId: null)
+  const userId = req.user ? req.user.userId : null;
+
+  const result = listBuildRecords({ page, limit, category, userId });
 
   const response: DiagnosisListResponse = {
     data: result.data.map(toSummary),
@@ -123,11 +143,11 @@ router.get("/", (req: Request, res: Response): void => {
 
 /**
  * Returns the full DiagnosisDetail for a single record.
- * Returns 404 when no record with the given id exists.
+ * Returns 404 when no record with the given id exists or is not accessible.
  *
  * Requirements: 7.3, 7.4
  */
-router.get("/:id", (req: Request, res: Response): void => {
+router.get("/:id", optionalAuth, (req: Request, res: Response): void => {
   const id = req.params["id"] as string;
 
   const record = getBuildRecordById(id);
@@ -136,7 +156,62 @@ router.get("/:id", (req: Request, res: Response): void => {
     return;
   }
 
+  // Access control: authenticated users can only see their own records;
+  // unauthenticated users can only see demo records (userId: null).
+  if (req.user) {
+    if (record.userId !== req.user.userId) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+  } else {
+    if (record.userId !== null) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+  }
+
   res.status(200).json(toDetail(record));
 });
 
 export { router as diagnosesRouter };
+
+// ── Public diagnoses router (demo records only) ───────────────────────────────
+
+const publicRouter = Router();
+
+publicRouter.get("/diagnoses", (req: Request, res: Response): void => {
+  const rawPage = req.query.page;
+  const rawLimit = req.query.limit;
+  const rawCategory = req.query.category;
+
+  if (rawCategory !== undefined && rawCategory !== null && rawCategory !== "") {
+    if (!VALID_CATEGORIES.has(rawCategory as string)) {
+      res.status(400).json({ error: `Invalid category: "${rawCategory}"` });
+      return;
+    }
+  }
+
+  const page = rawPage ? Math.max(1, parseInt(rawPage as string, 10) || 1) : 1;
+  const limit = rawLimit
+    ? Math.min(100, Math.max(1, parseInt(rawLimit as string, 10) || 20))
+    : 20;
+
+  const category =
+    rawCategory && VALID_CATEGORIES.has(rawCategory as string)
+      ? (rawCategory as FailureCategory)
+      : null;
+
+  // Public router always returns demo records (userId: null)
+  const result = listBuildRecords({ page, limit, category, userId: null });
+
+  const response: DiagnosisListResponse = {
+    data: result.data.map(toSummary),
+    total: result.total,
+    page: result.page,
+    pageSize: result.pageSize,
+  };
+
+  res.status(200).json(response);
+});
+
+export { publicRouter as publicDiagnosesRouter };
