@@ -11,6 +11,12 @@ import { fetchConfig, type AppConfig } from './api';
 const GITHUB_CLIENT_ID_KEY = 'cicd-doctor-client-id';
 const GITHUB_USERNAME_KEY = 'cicd-doctor-github-username';
 
+/** Clear all GitHub OAuth state from localStorage and return empty values. */
+function clearGitHubLocalStorage() {
+  localStorage.removeItem(GITHUB_USERNAME_KEY);
+  localStorage.removeItem(GITHUB_CLIENT_ID_KEY);
+}
+
 /** Loading → spinner, no user → /login, user → children. */
 const PrivateRoute: React.FC = () => {
   const { user, loading } = useAuth();
@@ -25,13 +31,15 @@ const PrivateRoute: React.FC = () => {
   return <Outlet />;
 };
 
-/** Top bar: shows email + webhook secret + logout when authenticated, signup CTA when not. */
+/** Top bar: shows email + webhook secret + logout when authenticated. */
 const AppHeader: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [copied, setCopied] = React.useState(false);
 
   const handleLogout = async () => {
+    // Clear GitHub OAuth state so the next user starts fresh
+    clearGitHubLocalStorage();
     await logout();
     navigate('/login');
   };
@@ -74,13 +82,39 @@ const AppHeader: React.FC = () => {
 
 /** Main routes — rendered inside AuthProvider. */
 const AppRoutes: React.FC = () => {
+  const { user } = useAuth();
   const [config, setConfig] = useState<AppConfig | null>(null);
-  const [githubClientId, setGithubClientId] = useState<string | null>(
-    () => localStorage.getItem(GITHUB_CLIENT_ID_KEY),
-  );
-  const [githubUsername, setGithubUsername] = useState<string | null>(
-    () => localStorage.getItem(GITHUB_USERNAME_KEY),
-  );
+
+  // GitHub OAuth state — scoped to the current authenticated user.
+  // Reset to empty whenever the user changes (login/logout/switch account).
+  const [githubClientId, setGithubClientId] = useState<string | null>(null);
+  const [githubUsername, setGithubUsername] = useState<string | null>(null);
+
+  // When user identity changes, read localStorage for THIS user's GitHub state.
+  // On logout (user becomes null) always clear to prevent cross-user leakage.
+  useEffect(() => {
+    if (!user) {
+      // Logged out — clear everything so the next user starts with no GitHub connection
+      setGithubUsername(null);
+      setGithubClientId(null);
+      clearGitHubLocalStorage();
+    } else {
+      // Logged in — read any stored GitHub OAuth state
+      // Store the userId alongside so we can detect account switches
+      const storedUserId = localStorage.getItem('cicd-doctor-user-id');
+      if (storedUserId !== user.id) {
+        // Different account — clear stale GitHub state from previous user
+        clearGitHubLocalStorage();
+        localStorage.setItem('cicd-doctor-user-id', user.id);
+        setGithubUsername(null);
+        setGithubClientId(null);
+      } else {
+        // Same account — restore their GitHub connection state
+        setGithubUsername(localStorage.getItem(GITHUB_USERNAME_KEY));
+        setGithubClientId(localStorage.getItem(GITHUB_CLIENT_ID_KEY));
+      }
+    }
+  }, [user?.id]); // only re-run when the user ID changes
 
   useEffect(() => {
     fetchConfig()
@@ -96,6 +130,8 @@ const AppRoutes: React.FC = () => {
     const uname = params.get('username');
     if (cid) { localStorage.setItem(GITHUB_CLIENT_ID_KEY, cid); setGithubClientId(cid); }
     if (uname) { localStorage.setItem(GITHUB_USERNAME_KEY, uname); setGithubUsername(uname); }
+    // Clean up URL
+    window.history.replaceState({}, '', window.location.pathname);
   }, []);
 
   const handleGithubDisconnect = () => {
