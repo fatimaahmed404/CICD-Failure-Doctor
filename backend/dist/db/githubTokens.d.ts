@@ -11,7 +11,7 @@ export interface GitHubTokenRow {
     client_id: string;
     encrypted_token: string;
     github_username: string | null;
-    created_at: number;
+    created_at: string;
 }
 export interface GitHubTokenRecord {
     clientId: string;
