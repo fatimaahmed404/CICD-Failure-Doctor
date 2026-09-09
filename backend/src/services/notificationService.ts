@@ -11,6 +11,7 @@
 
 import type { BuildRecord, DiagnosisResult } from "../types.js";
 import nodemailer from "nodemailer";
+import { getUserById } from "../db/users.js";
 
 /**
  * Extracts the first sentence from a text string.
@@ -80,39 +81,59 @@ async function sendEmailNotification(
   category: string,
   excerpt: string,
   detailUrl: string,
+  repoName?: string,
+  jobName?: string,
 ): Promise<boolean> {
   try {
-    // Configure SMTP transport
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || "smtp.gmail.com",
       port: parseInt(process.env.SMTP_PORT || "587", 10),
-      secure: false, // true for 465, false for other ports
+      secure: false,
       auth: {
         user: process.env.SMTP_USER || toAddress,
         pass: process.env.SMTP_PASS || "",
       },
     });
 
-    const subject = `CI/CD Failure Diagnosed: ${category}`;
-    const text = `A CI/CD build failure has been diagnosed.\n\nCategory: ${category}\n\nSummary: ${excerpt}\n\nView full diagnosis: ${detailUrl}`;
+    const repoLine = repoName ? `\n\nRepository: ${repoName}` : "";
+    const jobLine  = jobName  ? `\nJob: ${jobName}` : "";
+
+    const subject = `🔴 CI/CD Build Failed: ${repoName ?? category}`;
+    const text = [
+      `Your CI/CD build has failed and been diagnosed by CI/CD Failure Doctor.`,
+      repoLine + jobLine,
+      `\nFailure Category: ${category}`,
+      `\nSummary: ${excerpt}`,
+      `\nView the full diagnosis and suggested fix:\n${detailUrl}`,
+    ].join("");
+
     const html = `
-      <h2>CI/CD Failure Diagnosed</h2>
-      <p><strong>Category:</strong> ${category}</p>
-      <p><strong>Summary:</strong> ${excerpt}</p>
-      <p><a href="${detailUrl}">View full diagnosis</a></p>
+      <div style="font-family:sans-serif;max-width:600px">
+        <h2 style="color:#e74c3c">🔴 CI/CD Build Failed</h2>
+        ${repoName ? `<p><strong>Repository:</strong> ${repoName}</p>` : ""}
+        ${jobName  ? `<p><strong>Job:</strong> ${jobName}</p>` : ""}
+        <p><strong>Failure Category:</strong> ${category}</p>
+        <p><strong>Summary:</strong> ${excerpt}</p>
+        <p style="margin-top:24px">
+          <a href="${detailUrl}" style="background:#3498db;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">
+            View Full Diagnosis &amp; Fix →
+          </a>
+        </p>
+        <p style="color:#7f8c8d;font-size:0.85rem;margin-top:24px">
+          Sent by <a href="${process.env.FRONTEND_URL || "https://cicd-failure-doctor-frontend.vercel.app"}">CI/CD Failure Doctor</a>
+        </p>
+      </div>
     `;
 
     await transporter.sendMail({
-      from: process.env.SMTP_USER || toAddress,
+      from: `"CI/CD Failure Doctor" <${process.env.SMTP_USER || toAddress}>`,
       to: toAddress,
       subject,
       text,
       html,
     });
 
-    console.log(
-      `[NotificationService] Email notification sent to ${toAddress} for category: ${category}`,
-    );
+    console.log(`[NotificationService] Email sent to ${toAddress} for ${repoName ?? category}`);
     return true;
   } catch (error) {
     console.error(
@@ -139,43 +160,54 @@ export async function notify(
   result: DiagnosisResult,
 ): Promise<void> {
   const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL?.trim();
-  const notificationEmail = process.env.NOTIFICATION_EMAIL?.trim();
   const appBaseUrl = (process.env.APP_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
+  const frontendUrl = (process.env.FRONTEND_URL?.trim() || appBaseUrl);
 
-  // If both notification channels are disabled, return early
-  if (!slackWebhookUrl && !notificationEmail) {
-    return;
+  // Resolve the email to notify:
+  // 1. If the record belongs to a user, email THAT user (per-user notification).
+  // 2. Fall back to NOTIFICATION_EMAIL env var (admin/demo catch-all).
+  let recipientEmail: string | undefined;
+  if (record.userId) {
+    const user = getUserById(record.userId);
+    if (user?.email) {
+      recipientEmail = user.email;
+    }
+  }
+  if (!recipientEmail) {
+    recipientEmail = process.env.NOTIFICATION_EMAIL?.trim();
   }
 
-  // Extract first sentence and build detail URL
-  const explanationExcerpt = extractFirstSentence(result.explanation);
-  const detailUrl = `${appBaseUrl}/diagnoses/${record.id}`;
+  const hasEmail = Boolean(recipientEmail);
+  const hasSlack = Boolean(slackWebhookUrl);
 
-  // Run both notifications in parallel (independently)
+  if (!hasEmail && !hasSlack) {
+    return; // nothing configured
+  }
+
+  const explanationExcerpt = extractFirstSentence(result.explanation);
+  // Link to the frontend detail page, not the backend
+  const detailUrl = `${frontendUrl}/diagnoses/${record.id}`;
+
   const promises: Promise<boolean>[] = [];
 
-  if (slackWebhookUrl) {
+  if (hasSlack) {
     promises.push(
-      sendSlackNotification(
-        slackWebhookUrl,
-        result.category,
-        explanationExcerpt,
-        detailUrl,
-      ),
+      sendSlackNotification(slackWebhookUrl!, result.category, explanationExcerpt, detailUrl),
     );
   }
 
-  if (notificationEmail) {
+  if (hasEmail) {
     promises.push(
       sendEmailNotification(
-        notificationEmail,
+        recipientEmail!,
         result.category,
         explanationExcerpt,
         detailUrl,
+        record.repoName,
+        record.jobName,
       ),
     );
   }
 
-  // Wait for all notifications to complete (but don't throw on failure)
   await Promise.allSettled(promises);
 }
