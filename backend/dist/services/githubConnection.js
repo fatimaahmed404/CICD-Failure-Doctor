@@ -13,39 +13,6 @@
  *
  * Requirements: 17.3, 17.6, 17.8, 17.9, 17.10, 17.15, 17.16
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GitHubPermissionError = exports.GitHubRateLimitError = exports.GitHubAuthError = void 0;
 exports.isOAuthEnabled = isOAuthEnabled;
@@ -287,11 +254,17 @@ async function connectRepo(accessToken, repoFullName, webhookSecret) {
     const { key: repoPublicKey, key_id: keyId } = (await pkRes.json());
     // ── Step 2: Encrypt secrets with libsodium sealed box ────────────────────
     //
-    // GitHub's API requires secrets encrypted with the repository's public key
-    // using libsodium crypto_box_seal (NaCl sealed box encryption).
-    // AES-GCM is only for our own token storage; NOT for GitHub repo secrets.
-    const sodium = await Promise.resolve().then(() => __importStar(require("libsodium-wrappers")));
-    await sodium.ready;
+    // GitHub requires sealed-box encryption with the repo's Curve25519 public key.
+    // We use require() + .default here because tsc compiles top-level ES imports to
+    // __importDefault/__importStar which snapshot the module object BEFORE sodium.ready
+    // resolves — leaving all crypto functions undefined at call time.
+    // require() returns the live object; accessing .default after awaiting .ready
+    // guarantees crypto_box_seal and friends are populated.
+    /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any */
+    const _sodiumMod = require("libsodium-wrappers");
+    await _sodiumMod.ready;
+    const sodium = _sodiumMod.default ?? _sodiumMod;
+    /* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any */
     function sealSecret(plaintext) {
         const keyBytes = sodium.from_base64(repoPublicKey, sodium.base64_variants.ORIGINAL);
         const msgBytes = sodium.from_string(plaintext);
