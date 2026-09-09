@@ -342,11 +342,17 @@ export async function connectRepo(
 
   // ── Step 2: Encrypt secrets with libsodium sealed box ────────────────────
   //
-  // GitHub's API requires secrets encrypted with the repository's public key
-  // using libsodium crypto_box_seal (NaCl sealed box encryption).
-  // AES-GCM is only for our own token storage; NOT for GitHub repo secrets.
-  const sodium = await import("libsodium-wrappers");
-  await sodium.ready;
+  // GitHub requires sealed-box encryption with the repo's Curve25519 public key.
+  // We use require() + .default here because tsc compiles top-level ES imports to
+  // __importDefault/__importStar which snapshot the module object BEFORE sodium.ready
+  // resolves — leaving all crypto functions undefined at call time.
+  // require() returns the live object; accessing .default after awaiting .ready
+  // guarantees crypto_box_seal and friends are populated.
+  /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any */
+  const _sodiumMod = require("libsodium-wrappers") as any;
+  await _sodiumMod.ready;
+  const sodium = _sodiumMod.default ?? _sodiumMod;
+  /* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any */
 
   function sealSecret(plaintext: string): string {
     const keyBytes = sodium.from_base64(repoPublicKey, sodium.base64_variants.ORIGINAL);

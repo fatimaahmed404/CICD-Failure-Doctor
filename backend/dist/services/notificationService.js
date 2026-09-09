@@ -64,7 +64,8 @@ async function sendSlackNotification(webhookUrl, category, excerpt, detailUrl) {
  * - SMTP_USER (default: derived from NOTIFICATION_EMAIL)
  * - SMTP_PASS (required if email is enabled)
  */
-async function sendEmailNotification(toAddress, category, excerpt, detailUrl, repoName, jobName) {
+async function sendEmailNotification(toAddress, category, excerpt, _detailUrl, // reserved for future use
+repoName, jobName) {
     try {
         const transporter = nodemailer_1.default.createTransport({
             host: process.env.SMTP_HOST || "smtp.gmail.com",
@@ -83,7 +84,7 @@ async function sendEmailNotification(toAddress, category, excerpt, detailUrl, re
             repoLine + jobLine,
             `\nFailure Category: ${category}`,
             `\nSummary: ${excerpt}`,
-            `\nView the full diagnosis and suggested fix:\n${detailUrl}`,
+            `\nLog in to your CI/CD Failure Doctor dashboard to view the full diagnosis and suggested fix.`,
         ].join("");
         const html = `
       <div style="font-family:sans-serif;max-width:600px">
@@ -92,13 +93,8 @@ async function sendEmailNotification(toAddress, category, excerpt, detailUrl, re
         ${jobName ? `<p><strong>Job:</strong> ${jobName}</p>` : ""}
         <p><strong>Failure Category:</strong> ${category}</p>
         <p><strong>Summary:</strong> ${excerpt}</p>
-        <p style="margin-top:24px">
-          <a href="${detailUrl}" style="background:#3498db;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">
-            View Full Diagnosis &amp; Fix →
-          </a>
-        </p>
         <p style="color:#7f8c8d;font-size:0.85rem;margin-top:24px">
-          Sent by <a href="${process.env.FRONTEND_URL || "https://cicd-failure-doctor-frontend.vercel.app"}">CI/CD Failure Doctor</a>
+          Sent by CI/CD Failure Doctor — log in to your dashboard to view the full diagnosis and suggested fix.
         </p>
       </div>
     `;
