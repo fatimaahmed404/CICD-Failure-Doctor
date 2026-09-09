@@ -75,7 +75,7 @@ async function processJob(job) {
         return;
     }
     // ── Log truncation ────────────────────────────────────────────────────────
-    const truncateResult = (0, logProcessor_js_1.truncateLog)(record.rawLog);
+    const truncateResult = await (0, logProcessor_js_1.truncateLog)(record.rawLog);
     (0, buildRecords_js_1.updateBuildRecord)(buildRecordId, {
         cleanedLog: truncateResult.cleanedLog,
         truncated: truncateResult.truncated,

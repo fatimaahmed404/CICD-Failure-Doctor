@@ -89,7 +89,7 @@ export async function processJob(job: DiagnosisJob): Promise<void> {
   }
 
   // ── Log truncation ────────────────────────────────────────────────────────
-  const truncateResult = truncateLog(record.rawLog);
+  const truncateResult = await truncateLog(record.rawLog);
   updateBuildRecord(buildRecordId, {
     cleanedLog: truncateResult.cleanedLog,
     truncated: truncateResult.truncated,
