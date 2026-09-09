@@ -156,6 +156,21 @@ app.listen(PORT, () => {
   if (isOAuthEnabled()) {
     console.log("[server] GitHub OAuth is ENABLED");
   }
+
+  // ── Keep-alive self-ping (prevents Render free tier from sleeping) ────────
+  // Render spins down free services after 15 min of inactivity.
+  // Ping our own /health endpoint every 10 minutes to stay awake.
+  // Only run in production to avoid noise in local dev.
+  if (process.env.NODE_ENV === "production" && process.env.APP_BASE_URL) {
+    const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+    const healthUrl = `${process.env.APP_BASE_URL}/health`;
+    setInterval(() => {
+      fetch(healthUrl)
+        .then(() => console.log("[keepalive] Pinged", healthUrl))
+        .catch((err: Error) => console.warn("[keepalive] Ping failed:", err.message));
+    }, PING_INTERVAL_MS);
+    console.log(`[keepalive] Self-ping enabled every 10 min → ${healthUrl}`);
+  }
 });
 
 export { app };
