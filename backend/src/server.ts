@@ -119,36 +119,34 @@ if (isOAuthEnabled()) {
   console.log("[server] GitHub OAuth routes registered");
 }
 
-// ── Test email endpoint (admin only — remove before production) ──────────────
-// GET /test-email?to=address@example.com
-// Sends a test email immediately so you can verify Resend config is working.
+// ── Test email endpoint — uses Resend REST API directly (no SMTP) ────────────
 app.get("/test-email", async (_req, res) => {
   const to = (typeof _req.query.to === "string" ? _req.query.to : process.env.NOTIFICATION_EMAIL) || "";
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const fromAddress = process.env.RESEND_FROM_EMAIL?.trim() || "CI/CD Doctor <onboarding@resend.dev>";
-  console.log("[test-email] Attempting send:", { to, apiKey: apiKey ? apiKey.slice(0,8)+"..." : "MISSING", from: fromAddress });
-  if (!apiKey) {
-    res.status(500).json({ error: "RESEND_API_KEY not set" });
-    return;
-  }
-  if (!to) {
-    res.status(400).json({ error: "No recipient — pass ?to=email or set NOTIFICATION_EMAIL" });
-    return;
-  }
+  console.log("[test-email] Starting:", { to, hasKey: Boolean(apiKey), from: fromAddress });
+  if (!apiKey) { res.status(500).json({ error: "RESEND_API_KEY not set" }); return; }
+  if (!to) { res.status(400).json({ error: "No recipient" }); return; }
   try {
-    const nodemailer = await import("nodemailer");
-    const transporter = nodemailer.default.createTransport({
-      host: "smtp.resend.com", port: 465, secure: true,
-      auth: { user: "resend", pass: apiKey },
+    console.log("[test-email] Calling Resend API...");
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: fromAddress, to,
+        subject: "CI/CD Doctor — email test",
+        html: "<h2>✅ Email is working!</h2>",
+        text: "Email test successful.",
+      }),
     });
-    const info = await transporter.sendMail({
-      from: fromAddress, to,
-      subject: "CI/CD Doctor — email test",
-      html: "<h2>✅ Email is working!</h2><p>Resend SMTP is configured correctly on Render.</p>",
-      text: "Email test — Resend SMTP is working.",
-    });
-    console.log("[test-email] SUCCESS:", info.messageId);
-    res.json({ ok: true, messageId: info.messageId, to, from: fromAddress });
+    const body = await r.json() as { id?: string; name?: string; message?: string };
+    if (!r.ok) {
+      console.error("[test-email] Resend API error:", r.status, body);
+      res.status(500).json({ error: body });
+      return;
+    }
+    console.log("[test-email] SUCCESS id:", body.id);
+    res.json({ ok: true, id: body.id, to, from: fromAddress });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[test-email] FAILED:", msg);
