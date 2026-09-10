@@ -119,34 +119,22 @@ if (isOAuthEnabled()) {
   console.log("[server] GitHub OAuth routes registered");
 }
 
-// ── Test email endpoint — uses Resend REST API directly (no SMTP) ────────────
+// ── Test email endpoint — verifies SMTP config is working ────────────────────
 app.get("/test-email", async (_req, res) => {
   const to = (typeof _req.query.to === "string" ? _req.query.to : process.env.NOTIFICATION_EMAIL) || "";
-  const apiKey = process.env.RESEND_API_KEY?.trim();
-  const fromAddress = process.env.RESEND_FROM_EMAIL?.trim() || "CI/CD Doctor <onboarding@resend.dev>";
-  console.log("[test-email] Starting:", { to, hasKey: Boolean(apiKey), from: fromAddress });
-  if (!apiKey) { res.status(500).json({ error: "RESEND_API_KEY not set" }); return; }
-  if (!to) { res.status(400).json({ error: "No recipient" }); return; }
+  const host = process.env.SMTP_HOST?.trim();
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.trim();
+  const from = process.env.SMTP_FROM?.trim() || user || "noreply@cicd-doctor.dev";
+  console.log("[test-email] Config:", { to, host, user: user ? user.slice(0,8)+"..." : "MISSING", passSet: Boolean(pass) });
+  if (!host || !user || !pass) { res.status(500).json({ error: "SMTP not configured", host, user: Boolean(user), pass: Boolean(pass) }); return; }
+  if (!to) { res.status(400).json({ error: "No recipient — pass ?to=email or set NOTIFICATION_EMAIL" }); return; }
   try {
-    console.log("[test-email] Calling Resend API...");
-    const r = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: fromAddress, to,
-        subject: "CI/CD Doctor — email test",
-        html: "<h2>✅ Email is working!</h2>",
-        text: "Email test successful.",
-      }),
-    });
-    const body = await r.json() as { id?: string; name?: string; message?: string };
-    if (!r.ok) {
-      console.error("[test-email] Resend API error:", r.status, body);
-      res.status(500).json({ error: body });
-      return;
-    }
-    console.log("[test-email] SUCCESS id:", body.id);
-    res.json({ ok: true, id: body.id, to, from: fromAddress });
+    const nodemailer = await import("nodemailer");
+    const t = nodemailer.default.createTransport({ host, port: parseInt(process.env.SMTP_PORT || "587", 10), secure: false, auth: { user, pass } });
+    const info = await t.sendMail({ from, to, subject: "CI/CD Doctor — email test", html: "<h2>✅ Email is working!</h2><p>Brevo SMTP is configured correctly.</p>", text: "Email test successful." });
+    console.log("[test-email] SUCCESS:", info.messageId);
+    res.json({ ok: true, messageId: info.messageId, to, from });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[test-email] FAILED:", msg);
