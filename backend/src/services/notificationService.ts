@@ -168,7 +168,21 @@ export async function notify(
   const hasEmail = Boolean(recipientEmail && process.env.RESEND_API_KEY?.trim());
   const hasSlack = Boolean(slackWebhookUrl);
 
-  if (!hasEmail && !hasSlack) return;
+  // Diagnostic log — helps trace email delivery issues
+  console.log("[NotificationService] notify() called:", {
+    recordId: record.id,
+    userId: record.userId,
+    recipientEmail: recipientEmail ?? "none",
+    hasResendKey: Boolean(process.env.RESEND_API_KEY?.trim()),
+    hasEmail,
+    hasSlack,
+    frontendUrl,
+  });
+
+  if (!hasEmail && !hasSlack) {
+    console.warn("[NotificationService] No notification channels configured — skipping");
+    return;
+  }
 
   const excerpt = extractFirstSentence(result.explanation);
   const detailUrl = `${frontendUrl}/diagnoses/${record.id}`;
