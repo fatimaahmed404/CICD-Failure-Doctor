@@ -1,31 +1,55 @@
-# CI/CD Failure Doctor
+# CI/CD Failure Doctor 🩺
 
-Automatically receives failed build logs from GitHub Actions or Jenkins, diagnoses the root cause using an LLM, and shows a plain-English explanation and suggested fix on a dashboard.
+An AI-powered tool that automatically diagnoses CI/CD build failures. When a build fails, it captures the logs, runs them through an LLM, and delivers a plain-English explanation of the root cause plus a suggested fix — directly to your dashboard and email inbox.
 
-## Features
-
-- Webhook ingestion from GitHub Actions / Jenkins
-- LLM-powered diagnosis with category + confidence level
-- React dashboard with live polling
-- Simulate mode (6 bundled failure scenarios) — demo without a real CI connection
-- Stretch: Slack/email notifications, helpfulness feedback
-
-## Stack
-
-- **Backend**: Node.js/Express, SQLite, TypeScript
-- **Frontend**: React + Vite
-- **LLM**: Any OpenAI-compatible API (OpenAI, Groq, etc.)
+**Live demo:** [cicd-failure-doctor-frontend.vercel.app](https://cicd-failure-doctor-frontend.vercel.app)
 
 ---
 
-## Setup
+## How It Works
 
-**Prerequisites**: Node.js 20+, an LLM API key (OpenAI or an OpenAI-compatible provider like Groq)
+1. A build fails in GitHub Actions
+2. A workflow sends the logs to the CI/CD Doctor webhook
+3. The backend processes the logs with an LLM
+4. The diagnosis appears in your private dashboard
+5. You receive an email with the failure category and summary
+
+No more manually digging through 500-line build logs.
+
+---
+
+## Features
+
+- **AI diagnosis** — categorizes failures: test failure, dependency error, Docker build failure, missing env var, timeout, lint error
+- **Private dashboards** — each user only sees their own build history
+- **Email notifications** — get notified the moment a diagnosis completes
+- **GitHub OAuth** — connect repos and auto-configure the workflow file with one click
+- **Per-user webhook secrets** — each account gets a unique secret for attribution
+- **Simulate mode** — try the full AI pipeline with 6 bundled failure scenarios, no CI setup needed
+- **Demo mode** — unauthenticated visitors can run simulations at `/demo`
+
+---
+
+## Tech Stack
+
+| Layer | Tech |
+|---|---|
+| Backend | Node.js, Express, TypeScript, SQLite |
+| Frontend | React, Vite, React Router |
+| Auth | JWT (httpOnly cookies), bcrypt |
+| LLM | Any OpenAI-compatible API (Groq, OpenAI, etc.) |
+| Email | Nodemailer via Resend SMTP |
+| Deployment | Render (backend) + Vercel (frontend) |
+
+---
+
+## Quick Start
+
+**Prerequisites:** Node.js 20+, an LLM API key (Groq is free at [console.groq.com](https://console.groq.com))
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/fatimaahmed404/CICD-Failure-Doctor
 cd CICD-Failure-Doctor
-npm install
 cd backend && npm install
 cd ../frontend && npm install
 ```
@@ -33,150 +57,108 @@ cd ../frontend && npm install
 Create `backend/.env`:
 
 ```env
-# Required
-WEBHOOK_SECRET=your-secret-key-here
-LLM_API_KEY=your-llm-api-key-here
-
-# Required if using a non-OpenAI provider (e.g. Groq) — omit entirely to use OpenAI's default endpoint
+WEBHOOK_SECRET=any-random-secret
+LLM_API_KEY=your-groq-or-openai-key
 LLM_BASE_URL=https://api.groq.com/openai/v1
-
-# Must match a model your provider actually serves
-# OpenAI example: gpt-4o-mini
-# Groq example: openai/gpt-oss-120b
-LLM_MODEL=openai/gpt-oss-120b
-
-# Optional
-DATABASE_PATH=./data/cicd-doctor.db
-PORT=3000
-SLACK_WEBHOOK_URL=
-NOTIFICATION_EMAIL=
+LLM_MODEL=llama-3.1-8b-instant
+SESSION_SECRET=any-random-string-32-chars
+TOKEN_ENCRYPTION_KEY=any-64-char-hex-string
 APP_BASE_URL=http://localhost:3000
+FRONTEND_URL=http://localhost:5173
 ```
 
-> **Note:** `.env` files use `#` for comments — make sure the lines you actually want active don't have a leading `#`.
-
-Build and run:
+Run:
 
 ```bash
-cd backend && npm run build && npm start
-cd ../frontend && npm run build && npm run preview
-```
-
-Backend: `http://localhost:3000` · Frontend: `http://localhost:4173`
-
-### Development mode (hot reload)
-
-```bash
+# Terminal 1
 cd backend && npm run dev
-cd frontend && npm run dev   # http://localhost:5173
+
+# Terminal 2
+cd frontend && npm run dev
 ```
+
+Open `http://localhost:5173`, sign up, and click **Simulate Failed Build** to see a diagnosis.
+
+---
+
+## Connecting Your CI Pipeline
+
+After signing up, your personal webhook secret is shown in the top header.
+
+**1. Add two secrets to your GitHub repo** (Settings → Secrets → Actions):
+
+| Secret | Value |
+|---|---|
+| `CICD_DOCTOR_SECRET` | Your webhook secret from the dashboard header |
+| `CICD_DOCTOR_URL` | `https://cicd-failure-doctor-1.onrender.com` |
+
+**2. Create `.github/workflows/ci.yml`** (your existing CI — must fail to trigger Doctor):
+
+```yaml
+name: CI Tests
+on:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install && npm test
+```
+
+**3. Create `.github/workflows/cicd-failure-doctor.yml`** (listens for failures and sends logs):
+
+```yaml
+name: Notify CI/CD Failure Doctor on Failure
+on:
+  workflow_run:
+    workflows: ["CI Tests"]
+    types: [completed]
+jobs:
+  notify:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Send logs to CI/CD Failure Doctor
+        run: |
+          curl -s -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}/logs" \
+            -L -o /tmp/logs.zip || true
+          LOGS=$(unzip -p /tmp/logs.zip 2>/dev/null | tail -c 15000 || echo "Log unavailable")
+          PAYLOAD=$(jq -nc \
+            --arg log    "$LOGS" \
+            --arg repo   "${{ github.repository }}" \
+            --arg job    "${{ github.event.workflow_run.name }}" \
+            --arg sha    "${{ github.event.workflow_run.head_sha }}" \
+            --arg branch "${{ github.event.workflow_run.head_branch }}" \
+            '{log:$log,repoName:$repo,jobName:$job,commitSha:$sha,source:"github",branch:$branch}')
+          curl -sf -X POST "${{ secrets.CICD_DOCTOR_URL }}/webhook/ingest" \
+            -H "Content-Type: application/json" \
+            -H "X-Webhook-Secret: ${{ secrets.CICD_DOCTOR_SECRET }}" \
+            -d "$PAYLOAD"
+```
+
+Or use the **Connect GitHub** button in the dashboard to set this up automatically.
 
 ---
 
 ## Deployment
 
-**Backend → Render or Railway**
+**Backend → Render**
+
 - Build command: `cd backend && npm install && npm run build`
 - Start command: `cd backend && npm start`
-- Set env vars: `WEBHOOK_SECRET`, `LLM_API_KEY`, `LLM_BASE_URL` (if applicable), `LLM_MODEL`, `DATABASE_PATH`, `NODE_VERSION=20`
+- Required env vars: `WEBHOOK_SECRET`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEY`, `APP_BASE_URL`, `FRONTEND_URL`, `NODE_ENV=production`, `RESEND_API_KEY`
 
 **Frontend → Vercel**
+
 - Root directory: `frontend`
-- Framework preset: Vite
-- Env var: `VITE_API_URL` = your deployed backend URL
-
-After deploying, update the backend's CORS origin (`backend/src/server.ts`) to include your Vercel URL, and update `APP_BASE_URL` to your deployed backend URL.
-
-**Docker (backend)**
-```bash
-cd backend
-docker build -t cicd-failure-doctor-backend .
-docker run -d -p 3000:3000 \
-  -e WEBHOOK_SECRET=your-secret \
-  -e LLM_API_KEY=your-api-key \
-  -e LLM_BASE_URL=https://api.groq.com/openai/v1 \
-  -e LLM_MODEL=openai/gpt-oss-120b \
-  -v $(pwd)/data:/app/data \
-  cicd-failure-doctor-backend
-```
-
----
-
-## Connecting a real CI system
-
-Requires the backend to be publicly reachable (deployed, or tunneled via `ngrok http 3000` for local testing).
-
-**GitHub Actions** — add repo secrets `CICD_DOCTOR_URL` and `CICD_DOCTOR_SECRET` (matching `WEBHOOK_SECRET`), then add to a workflow:
-```yaml
-- name: Notify CI/CD Failure Doctor
-  if: failure()
-  run: |
-    curl -s -X POST "${{ secrets.CICD_DOCTOR_URL }}/webhook/ingest" \
-      -H "Content-Type: application/json" \
-      -H "X-Webhook-Secret: ${{ secrets.CICD_DOCTOR_SECRET }}" \
-      -d '{
-        "log":       "'"$(cat build.log | tail -300)"'",
-        "repoName":  "${{ github.repository }}",
-        "jobName":   "${{ github.workflow }} / ${{ github.job }}",
-        "commitSha": "${{ github.sha }}",
-        "source":    "github",
-        "branch":    "${{ github.ref_name }}"
-      }'
-```
-
-**Jenkins** — add to a declarative `Jenkinsfile`'s `post` block (requires the HTTP Request plugin):
-```groovy
-post {
-  failure {
-    script {
-      def log = currentBuild.rawBuild.getLog(300).join('\n')
-      httpRequest(
-        httpMode:      'POST',
-        url:           "${env.CICD_DOCTOR_URL}/webhook/ingest",
-        contentType:   'APPLICATION_JSON',
-        customHeaders: [[name: 'X-Webhook-Secret', value: env.CICD_DOCTOR_SECRET]],
-        requestBody:   groovy.json.JsonOutput.toJson([
-          log: log, repoName: env.JOB_NAME, jobName: env.JOB_NAME,
-          commitSha: env.GIT_COMMIT, source: 'jenkins'
-        ])
-      )
-    }
-  }
-}
-```
-
----
-
-## API Reference (short)
-
-| Endpoint | Purpose |
-|---|---|
-| `POST /webhook/ingest` | Real CI failure ingestion (needs `X-Webhook-Secret` header) |
-| `POST /simulate` | Demo mode — `{ "scenario": "test-failure" \| "dependency-error" \| "docker-build-failure" \| "env-var-missing" \| "timeout" \| "lint-error" }` |
-| `GET /diagnoses?page=&limit=&category=` | Paginated list |
-| `GET /diagnoses/:id` | Full detail incl. raw log and suggested fix |
-| `GET /health` | Health check (for uptime pings on free-tier hosts) |
-
----
-
-## Testing
-
-```bash
-cd backend && npm test
-cd frontend && npm test
-```
-
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| `Missing required environment variable` on start | Set `WEBHOOK_SECRET` and `LLM_API_KEY` in `backend/.env`, restart the server (env changes need a restart) |
-| Diagnoses stuck `unavailable` / model 404 error | `LLM_MODEL` doesn't match your provider — Groq needs `LLM_BASE_URL=https://api.groq.com/openai/v1` and a Groq model name (e.g. `openai/gpt-oss-120b`), not `gpt-4o-mini` |
-| `.env` values not taking effect | Check for a leading `#` (comments the line out) and confirm you restarted after editing |
-| `Failed to fetch diagnoses: Too Many Requests` | Rate limiter is applied too broadly — it should only cover `/webhook/ingest` and `/simulate`, not `/diagnoses` polling |
-| First request after idle takes 30+ seconds | Free-tier host cold start — ping `/health` periodically via UptimeRobot or cron-job.org |
+- Framework: Vite
+- Env var: `VITE_API_BASE_URL=https://your-backend.onrender.com`
 
 ---
 
@@ -186,18 +168,24 @@ cd frontend && npm test
 CICD-Failure-Doctor/
 ├── backend/
 │   ├── src/
-│   │   ├── auth/            # Webhook authentication
-│   │   ├── db/               # Database init and records
-│   │   ├── routes/           # Express route handlers
-│   │   ├── services/         # Ingest, notifications
-│   │   ├── jobQueue.ts       # Async job processing
-│   │   ├── llmClient.ts      # LLM integration
-│   │   ├── logProcessor.ts   # Log cleaning/truncation
-│   │   └── server.ts
-│   ├── tests/
-│   ├── fixtures/             # Sample logs for simulate mode
-│   └── Dockerfile
-├── frontend/
-│   └── src/
-└── README.md
+│   │   ├── auth/           # JWT middleware, bcrypt, webhook validation
+│   │   ├── db/             # SQLite schema, users, build records, tokens
+│   │   ├── routes/         # auth, diagnoses, feedback, github, webhook, simulate
+│   │   ├── services/       # GitHub connection, ingest, notifications
+│   │   ├── jobQueue.ts     # Async LLM job processing with retry + SLA timeout
+│   │   ├── llmClient.ts    # OpenAI-compatible LLM integration
+│   │   └── logProcessor.ts # Log truncation and ANSI cleaning
+│   ├── tests/              # Unit + integration + property-based tests
+│   └── fixtures/           # Pre-built failure logs for simulate mode
+└── frontend/
+    └── src/
+        ├── contexts/       # AuthContext (JWT session)
+        ├── pages/          # Login, Signup, Demo
+        └── components/     # DiagnosisList, DiagnosisDetail, GitHubConnect
 ```
+
+---
+
+## License
+
+MIT
