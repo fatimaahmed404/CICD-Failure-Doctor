@@ -119,6 +119,43 @@ if (isOAuthEnabled()) {
   console.log("[server] GitHub OAuth routes registered");
 }
 
+// ── Test email endpoint (admin only — remove before production) ──────────────
+// GET /test-email?to=address@example.com
+// Sends a test email immediately so you can verify Resend config is working.
+app.get("/test-email", async (_req, res) => {
+  const to = (typeof _req.query.to === "string" ? _req.query.to : process.env.NOTIFICATION_EMAIL) || "";
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  const fromAddress = process.env.RESEND_FROM_EMAIL?.trim() || "CI/CD Doctor <onboarding@resend.dev>";
+  console.log("[test-email] Attempting send:", { to, apiKey: apiKey ? apiKey.slice(0,8)+"..." : "MISSING", from: fromAddress });
+  if (!apiKey) {
+    res.status(500).json({ error: "RESEND_API_KEY not set" });
+    return;
+  }
+  if (!to) {
+    res.status(400).json({ error: "No recipient — pass ?to=email or set NOTIFICATION_EMAIL" });
+    return;
+  }
+  try {
+    const nodemailer = await import("nodemailer");
+    const transporter = nodemailer.default.createTransport({
+      host: "smtp.resend.com", port: 465, secure: true,
+      auth: { user: "resend", pass: apiKey },
+    });
+    const info = await transporter.sendMail({
+      from: fromAddress, to,
+      subject: "CI/CD Doctor — email test",
+      html: "<h2>✅ Email is working!</h2><p>Resend SMTP is configured correctly on Render.</p>",
+      text: "Email test — Resend SMTP is working.",
+    });
+    console.log("[test-email] SUCCESS:", info.messageId);
+    res.json({ ok: true, messageId: info.messageId, to, from: fromAddress });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[test-email] FAILED:", msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
 // Health endpoint — used by uptime monitors to prevent free-tier cold starts
 // Requirements: 11.4
 app.get("/health", (_req, res) => {
