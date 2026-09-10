@@ -82,8 +82,11 @@ if ((0, githubConnection_js_1.isOAuthEnabled)()) {
             // Associate the token with the authenticated user if a valid session cookie is present.
             // The callback arrives as a browser redirect so requireAuth is not applied here —
             // we read the cookie manually with verifyToken (non-throwing).
+            // We also verify the userId exists in the users table to avoid FK constraint failures
+            // (can happen if the DB was reset between sessions while the JWT is still valid).
             const authCookie = req.cookies?.auth_token;
-            const userId = authCookie ? ((0, authService_js_1.verifyToken)(authCookie)?.userId ?? null) : null;
+            const tokenUserId = authCookie ? ((0, authService_js_1.verifyToken)(authCookie)?.userId ?? null) : null;
+            const userId = tokenUserId ? ((0, users_js_1.getUserById)(tokenUserId) ? tokenUserId : null) : null;
             // clientId is kept for legacy redirect params only
             const clientId = generateClientId();
             (0, githubTokens_js_1.upsertGitHubToken)(clientId, encryptedToken, username, userId);

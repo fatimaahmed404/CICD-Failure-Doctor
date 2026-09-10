@@ -14,6 +14,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { ingestBuild, IngestValidationError } from "../services/ingestBuild.js";
 import { verifyToken } from "../auth/authService.js";
+import { getUserById } from "../db/users.js";
 import type { SimulationScenario } from "../types.js";
 
 const router = Router();
@@ -93,12 +94,14 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
   }
 
   // ── Resolve userId from auth cookie ──────────────────────────────────────
+  // Verify the user exists in DB — guards against stale JWTs after DB resets
   const token: string | undefined = req.cookies?.auth_token;
   let userId: string | null = null;
   if (token) {
-    const user = verifyToken(token);
-    if (user) {
-      userId = user.userId;
+    const decoded = verifyToken(token);
+    if (decoded?.userId) {
+      const dbUser = getUserById(decoded.userId);
+      userId = dbUser ? decoded.userId : null;
     }
   }
 

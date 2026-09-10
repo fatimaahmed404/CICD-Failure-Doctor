@@ -15,6 +15,7 @@ const fs_1 = require("fs");
 const path_1 = require("path");
 const ingestBuild_js_1 = require("../services/ingestBuild.js");
 const authService_js_1 = require("../auth/authService.js");
+const users_js_1 = require("../db/users.js");
 const router = (0, express_1.Router)();
 // ── Constants ─────────────────────────────────────────────────────────────────
 const VALID_SCENARIOS = new Set([
@@ -82,12 +83,14 @@ router.post("/", async (req, res) => {
         return;
     }
     // ── Resolve userId from auth cookie ──────────────────────────────────────
+    // Verify the user exists in DB — guards against stale JWTs after DB resets
     const token = req.cookies?.auth_token;
     let userId = null;
     if (token) {
-        const user = (0, authService_js_1.verifyToken)(token);
-        if (user) {
-            userId = user.userId;
+        const decoded = (0, authService_js_1.verifyToken)(token);
+        if (decoded?.userId) {
+            const dbUser = (0, users_js_1.getUserById)(decoded.userId);
+            userId = dbUser ? decoded.userId : null;
         }
     }
     // ── Load fixture ──────────────────────────────────────────────────────────
