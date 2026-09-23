@@ -20,6 +20,24 @@ import { getBuildRecordById, updateBuildRecord } from "./db/buildRecords.js";
 import { truncateLog } from "./logProcessor.js";
 import { diagnoseBuild, LLMParseError, NetworkError } from "./llmClient.js";
 import { notify } from "./services/notificationService.js";
+
+/** Fire-and-forget notification helper — never throws, never blocks the job. */
+function fireNotification(buildRecordId: string, result: {
+  category: string;
+  explanation: string;
+  suggestedFix: string;
+  confidence: string;
+}): void {
+  const rec = getBuildRecordById(buildRecordId);
+  if (!rec) return;
+  (async () => {
+    try {
+      await notify(rec, result as never);
+    } catch (notifErr) {
+      console.error("[jobQueue] Notification failed:", notifErr);
+    }
+  })();
+}
 import type { DiagnosisJob } from "./types.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -141,6 +159,12 @@ export async function processJob(job: DiagnosisJob): Promise<void> {
           errorMessage: err.message,
         });
         console.error(`[jobQueue] LLMParseError for ${buildRecordId}:`, err.message);
+        fireNotification(buildRecordId, {
+          category: "unknown",
+          explanation: `The build failed but an automated diagnosis could not be generated (${err.message}).`,
+          suggestedFix: "Open the dashboard to review the raw logs manually.",
+          confidence: "low",
+        });
         return;
       }
 
@@ -173,6 +197,12 @@ export async function processJob(job: DiagnosisJob): Promise<void> {
     `[jobQueue] All attempts exhausted for ${buildRecordId}:`,
     lastError?.message,
   );
+  fireNotification(buildRecordId, {
+    category: "unknown",
+    explanation: `Your build failed. An automated diagnosis could not be generated (${lastError?.message ?? "unknown error"}).`,
+    suggestedFix: "Open the dashboard to review the raw logs manually.",
+    confidence: "low",
+  });
 }
 
 // ── SLA-bounded wrapper ───────────────────────────────────────────────────────

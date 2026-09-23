@@ -26,6 +26,20 @@ const buildRecords_js_1 = require("./db/buildRecords.js");
 const logProcessor_js_1 = require("./logProcessor.js");
 const llmClient_js_1 = require("./llmClient.js");
 const notificationService_js_1 = require("./services/notificationService.js");
+/** Fire-and-forget notification helper — never throws, never blocks the job. */
+function fireNotification(buildRecordId, result) {
+    const rec = (0, buildRecords_js_1.getBuildRecordById)(buildRecordId);
+    if (!rec)
+        return;
+    (async () => {
+        try {
+            await (0, notificationService_js_1.notify)(rec, result);
+        }
+        catch (notifErr) {
+            console.error("[jobQueue] Notification failed:", notifErr);
+        }
+    })();
+}
 // ── Constants ─────────────────────────────────────────────────────────────────
 /** Maximum LLM attempts: initial call + 1 retry for NetworkError. */
 const MAX_ATTEMPTS = 2;
@@ -124,6 +138,12 @@ async function processJob(job) {
                     errorMessage: err.message,
                 });
                 console.error(`[jobQueue] LLMParseError for ${buildRecordId}:`, err.message);
+                fireNotification(buildRecordId, {
+                    category: "unknown",
+                    explanation: `The build failed but an automated diagnosis could not be generated (${err.message}).`,
+                    suggestedFix: "Open the dashboard to review the raw logs manually.",
+                    confidence: "low",
+                });
                 return;
             }
             if (err instanceof llmClient_js_1.NetworkError) {
@@ -147,6 +167,12 @@ async function processJob(job) {
         errorMessage: lastError?.message ?? "Unknown error",
     });
     console.error(`[jobQueue] All attempts exhausted for ${buildRecordId}:`, lastError?.message);
+    fireNotification(buildRecordId, {
+        category: "unknown",
+        explanation: `Your build failed. An automated diagnosis could not be generated (${lastError?.message ?? "unknown error"}).`,
+        suggestedFix: "Open the dashboard to review the raw logs manually.",
+        confidence: "low",
+    });
 }
 // ── SLA-bounded wrapper ───────────────────────────────────────────────────────
 /**

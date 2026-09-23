@@ -101,12 +101,9 @@ const DemoPage: React.FC = () => {
 
   return (
     <div>
-      {/* Demo header bar */}
+      {/* Sign-in link bar — the global AppHeader already shows the signup CTA */}
       <div className="app-header-bar">
         <div className="app-header-auth">
-          <Link to="/signup" className="app-header-signup-cta">
-            Sign up to save your history privately
-          </Link>
           <Link
             to="/login"
             style={{
