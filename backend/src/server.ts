@@ -119,22 +119,36 @@ if (isOAuthEnabled()) {
   console.log("[server] GitHub OAuth routes registered");
 }
 
-// ── Test email endpoint — verifies SMTP config is working ────────────────────
+// ── Test email endpoint — uses Brevo HTTP API (works on Render) ──────────────
 app.get("/test-email", async (_req, res) => {
   const to = (typeof _req.query.to === "string" ? _req.query.to : process.env.NOTIFICATION_EMAIL) || "";
-  const host = process.env.SMTP_HOST?.trim();
-  const user = process.env.SMTP_USER?.trim();
-  const pass = process.env.SMTP_PASS?.trim();
-  const from = process.env.SMTP_FROM?.trim() || user || "noreply@cicd-doctor.dev";
-  console.log("[test-email] Config:", { to, host, user: user ? user.slice(0,8)+"..." : "MISSING", passSet: Boolean(pass) });
-  if (!host || !user || !pass) { res.status(500).json({ error: "SMTP not configured", host, user: Boolean(user), pass: Boolean(pass) }); return; }
+  const apiKey = process.env.BREVO_API_KEY?.trim();
+  const fromEmail = process.env.BREVO_FROM_EMAIL?.trim() || "fatiimaahmed06@gmail.com";
+  const fromName = process.env.BREVO_FROM_NAME?.trim() || "CI/CD Failure Doctor";
+  console.log("[test-email] Config:", { to, hasKey: Boolean(apiKey), fromEmail });
+  if (!apiKey) { res.status(500).json({ error: "BREVO_API_KEY not set" }); return; }
   if (!to) { res.status(400).json({ error: "No recipient — pass ?to=email or set NOTIFICATION_EMAIL" }); return; }
   try {
-    const nodemailer = await import("nodemailer");
-    const t = nodemailer.default.createTransport({ host, port: parseInt(process.env.SMTP_PORT || "587", 10), secure: false, auth: { user, pass } });
-    const info = await t.sendMail({ from, to, subject: "CI/CD Doctor — email test", html: "<h2>✅ Email is working!</h2><p>Brevo SMTP is configured correctly.</p>", text: "Email test successful." });
-    console.log("[test-email] SUCCESS:", info.messageId);
-    res.json({ ok: true, messageId: info.messageId, to, from });
+    console.log("[test-email] Calling Brevo API...");
+    const r = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": apiKey, "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({
+        sender: { email: fromEmail, name: fromName },
+        to: [{ email: to }],
+        subject: "CI/CD Doctor — email test",
+        htmlContent: "<h2>✅ Email is working!</h2><p>Brevo HTTP API is configured correctly.</p>",
+        textContent: "Email test successful.",
+      }),
+    });
+    const body = await r.text();
+    if (!r.ok) {
+      console.error("[test-email] Brevo API error:", r.status, body);
+      res.status(500).json({ error: body, status: r.status });
+      return;
+    }
+    console.log("[test-email] SUCCESS:", body);
+    res.json({ ok: true, response: JSON.parse(body), to, from: fromEmail });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[test-email] FAILED:", msg);

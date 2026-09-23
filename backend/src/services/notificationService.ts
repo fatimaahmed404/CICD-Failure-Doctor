@@ -1,42 +1,25 @@
 /**
  * Notification Service
  *
- * Sends email via Brevo SMTP (smtp-relay.brevo.com:587).
- * Brevo works on Render free tier and sends to ANY email address.
- * 300 free emails/day, no domain verification needed.
+ * Sends email via Brevo's HTTP API (https://api.brevo.com/v3/smtp/email).
+ * Uses HTTPS/443 — works on Render free tier where SMTP ports (587/465) are blocked.
+ * Sends to ANY email address. 300 free emails/day.
  *
  * Required env vars:
- *   SMTP_HOST=smtp-relay.brevo.com
- *   SMTP_PORT=587
- *   SMTP_USER=<brevo-login>
- *   SMTP_PASS=<brevo-smtp-key>
- *   SMTP_FROM=CI/CD Failure Doctor <brevo-login>
+ *   BREVO_API_KEY   — from Brevo dashboard → SMTP & API → API Keys (starts with xkeysib-)
+ *   BREVO_FROM_EMAIL — verified sender email (e.g. your Brevo account email)
+ *   BREVO_FROM_NAME  — display name (optional, defaults to "CI/CD Failure Doctor")
  *
  * Requirements: 12.1, 12.2, 12.3
  */
 
 import type { BuildRecord, DiagnosisResult } from "../types.js";
-import nodemailer from "nodemailer";
 import { getUserById } from "../db/users.js";
 
 function extractFirstSentence(text: string): string {
   const match = text.match(/^[^.!?]+[.!?]/);
   if (match) return match[0].trim();
   return text.length > 100 ? text.slice(0, 100) + "..." : text;
-}
-
-function createTransporter() {
-  const host = process.env.SMTP_HOST?.trim();
-  const user = process.env.SMTP_USER?.trim();
-  const pass = process.env.SMTP_PASS?.trim();
-  if (!host || !user || !pass) return null;
-
-  return nodemailer.createTransport({
-    host,
-    port: parseInt(process.env.SMTP_PORT || "587", 10),
-    secure: false,
-    auth: { user, pass },
-  });
 }
 
 async function sendEmail(
@@ -47,18 +30,17 @@ async function sendEmail(
   excerpt: string,
   frontendUrl: string,
 ): Promise<boolean> {
-  const transporter = createTransporter();
-  if (!transporter) {
-    console.warn("[NotificationService] SMTP not configured — skipping email");
+  const apiKey = process.env.BREVO_API_KEY?.trim();
+  if (!apiKey) {
+    console.warn("[NotificationService] BREVO_API_KEY not set — skipping email");
     return false;
   }
 
-  const fromAddress = process.env.SMTP_FROM?.trim()
-    || process.env.SMTP_USER?.trim()
-    || "noreply@cicd-doctor.dev";
+  const fromEmail = process.env.BREVO_FROM_EMAIL?.trim() || "fatiimaahmed06@gmail.com";
+  const fromName = process.env.BREVO_FROM_NAME?.trim() || "CI/CD Failure Doctor";
 
   const subject = `🔴 Build Failed: ${repoName}`;
-  const html = `
+  const htmlContent = `
     <div style="font-family:sans-serif;max-width:600px;padding:24px;border:1px solid #eee;border-radius:8px">
       <h2 style="color:#e74c3c;margin:0 0 20px">🔴 CI/CD Build Failed</h2>
       <p><strong>Repository:</strong> ${repoName}</p>
@@ -73,7 +55,7 @@ async function sendEmail(
       </p>
     </div>`;
 
-  const text = [
+  const textContent = [
     `CI/CD Build Failed`,
     `Repository: ${repoName}`,
     `Job: ${jobName}`,
@@ -84,14 +66,31 @@ async function sendEmail(
   ].join("\n");
 
   try {
-    const info = await transporter.sendMail({
-      from: fromAddress,
-      to: toAddress,
-      subject,
-      html,
-      text,
+    console.log(`[NotificationService] Sending email to ${toAddress} via Brevo API...`);
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "api-key": apiKey,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({
+        sender: { email: fromEmail, name: fromName },
+        to: [{ email: toAddress }],
+        subject,
+        htmlContent,
+        textContent,
+      }),
     });
-    console.log(`[NotificationService] Email sent to ${toAddress} — ${info.messageId}`);
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "unknown");
+      console.error(`[NotificationService] Brevo API error ${res.status}: ${body}`);
+      return false;
+    }
+
+    const data = await res.json().catch(() => ({})) as { messageId?: string };
+    console.log(`[NotificationService] Email sent to ${toAddress} — messageId: ${data.messageId}`);
     return true;
   } catch (err) {
     console.error("[NotificationService] Email failed:", err instanceof Error ? err.message : String(err));
@@ -138,19 +137,14 @@ export async function notify(
     recipientEmail = process.env.NOTIFICATION_EMAIL?.trim();
   }
 
-  const smtpReady = Boolean(
-    process.env.SMTP_HOST?.trim() &&
-    process.env.SMTP_USER?.trim() &&
-    process.env.SMTP_PASS?.trim()
-  );
-  const hasEmail = Boolean(recipientEmail && smtpReady);
+  const hasEmail = Boolean(recipientEmail && process.env.BREVO_API_KEY?.trim());
   const hasSlack = Boolean(slackWebhookUrl);
 
   console.log("[NotificationService] notify():", {
     recordId: record.id,
     userId: record.userId,
     recipientEmail: recipientEmail ?? "none",
-    smtpReady,
+    hasBrevoKey: Boolean(process.env.BREVO_API_KEY?.trim()),
     hasEmail,
     hasSlack,
   });
